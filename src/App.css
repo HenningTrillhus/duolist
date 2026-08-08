@@ -1,3 +1,73 @@
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes panelIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96) translateY(-4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes modalIn {
+  from {
+    opacity: 0;
+    transform: scale(0.92) translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes itemEnter {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes checkPop {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes toastIn {
+  from {
+    opacity: 0;
+    transform: translate(-50%, 10px);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, 0);
+  }
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .app {
   display: flex;
   flex-direction: column;
@@ -16,6 +86,19 @@
   color: var(--text);
 }
 
+.loading-error {
+  font-size: 15px;
+}
+
+.spinner {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  border: 3px solid var(--border);
+  border-top-color: var(--accent);
+  animation: spin 0.7s linear infinite;
+}
+
 .header {
   position: relative;
   padding: calc(env(safe-area-inset-top) + 16px) 20px 12px;
@@ -24,6 +107,11 @@
   border-bottom: 1px solid var(--border);
   background: var(--bg);
   z-index: 10;
+  box-shadow: 0 0 0 rgba(0, 0, 0, 0);
+}
+
+.header.scrolled {
+  box-shadow: var(--shadow-sm);
 }
 
 .header-top {
@@ -71,6 +159,7 @@
   font-size: 15px;
   font-weight: 700;
   background: var(--border);
+  box-shadow: var(--shadow-sm);
 }
 
 .user-panel {
@@ -79,14 +168,16 @@
   right: 12px;
   margin-top: 8px;
   background: var(--card);
-  border-radius: 16px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  border-radius: 18px;
+  box-shadow: var(--shadow-md);
   padding: 6px;
   z-index: 20;
   display: flex;
   flex-direction: column;
   gap: 2px;
   min-width: 150px;
+  transform-origin: top right;
+  animation: panelIn 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 
 .user-panel button {
@@ -103,7 +194,8 @@
 }
 
 .user-panel button.active {
-  background: var(--accent-bg, rgba(170, 59, 255, 0.12));
+  background: var(--accent-bg);
+  color: var(--accent);
 }
 
 .user-dot {
@@ -141,7 +233,7 @@
 }
 
 .theme-toggle button.active {
-  background: var(--accent-bg, rgba(170, 59, 255, 0.12));
+  background: var(--accent-bg);
   color: var(--accent);
 }
 
@@ -150,6 +242,7 @@
   height: 18px;
   color: var(--text);
   transition: transform 0.15s ease;
+  flex-shrink: 0;
 }
 
 .chevron.open {
@@ -169,10 +262,12 @@
   right: 12px;
   margin-top: 8px;
   background: var(--card);
-  border-radius: 16px;
-  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.25);
+  border-radius: 18px;
+  box-shadow: var(--shadow-md);
   padding: 8px;
   z-index: 20;
+  transform-origin: top center;
+  animation: panelIn 0.16s cubic-bezier(0.2, 0.9, 0.3, 1.1);
 }
 
 .switcher-list {
@@ -187,19 +282,19 @@
 .switcher-list button {
   width: 100%;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
   border: none;
   background: transparent;
   border-radius: 10px;
-  padding: 12px 10px;
+  padding: 10px 10px;
   text-align: left;
   color: var(--text-h);
 }
 
 .switcher-list button.active {
-  background: var(--accent-bg, rgba(170, 59, 255, 0.12));
+  background: var(--accent-bg);
   color: var(--accent);
 }
 
@@ -208,15 +303,18 @@
   font-weight: 500;
 }
 
-.switcher-type {
-  font-size: 13px;
+.switcher-meta {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 12.5px;
   color: var(--text);
-  opacity: 0.7;
+  opacity: 0.65;
 }
 
-.switcher-list button.active .switcher-type {
+.switcher-list button.active .switcher-meta {
   color: var(--accent);
-  opacity: 0.8;
+  opacity: 0.75;
 }
 
 .new-list {
@@ -283,21 +381,25 @@
 .modal-backdrop {
   position: fixed;
   inset: 0;
-  background: rgba(0, 0, 0, 0.5);
+  background: rgba(8, 6, 13, 0.55);
+  backdrop-filter: blur(2px);
   display: flex;
   align-items: center;
   justify-content: center;
   padding: 20px;
   z-index: 100;
+  animation: fadeIn 0.15s ease;
 }
 
 .modal-card {
   background: var(--bg);
-  border-radius: 20px;
+  border-radius: 22px;
   padding: 28px 24px;
   max-width: 320px;
   width: 100%;
   text-align: center;
+  box-shadow: var(--shadow-md);
+  animation: modalIn 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
 
 .modal-card h2 {
@@ -352,6 +454,42 @@
   color: #fff;
 }
 
+.toast {
+  position: fixed;
+  left: 50%;
+  bottom: calc(env(safe-area-inset-bottom) + 88px);
+  transform: translate(-50%, 0);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: var(--card);
+  color: var(--text-h);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 12px 12px 12px 16px;
+  box-shadow: var(--shadow-md);
+  max-width: calc(100% - 32px);
+  z-index: 90;
+  animation: toastIn 0.2s ease forwards;
+}
+
+.toast span {
+  font-size: 14px;
+  flex: 1;
+}
+
+.toast button {
+  flex-shrink: 0;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px;
+  width: 22px;
+  height: 22px;
+}
+
 .list {
   flex: 1;
   overflow-y: auto;
@@ -365,6 +503,7 @@
   opacity: 0.6;
   padding: 60px 20px;
   font-size: 16px;
+  animation: fadeIn 0.3s ease;
 }
 
 .list ul {
@@ -381,10 +520,53 @@
   align-items: center;
   gap: 12px;
   background: var(--card);
-  border-radius: 14px;
+  border-radius: 16px;
   padding: 12px 12px;
   min-height: 52px;
   border-left: 4px solid transparent;
+  box-shadow: var(--shadow-sm);
+  animation: itemEnter 0.22s ease;
+  transition: opacity 0.18s ease, transform 0.18s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+}
+
+.list li.editing {
+  align-items: flex-start;
+}
+
+.list li.editing .checkbox {
+  margin-top: 2px;
+}
+
+.store-group {
+  margin-bottom: 14px;
+}
+
+.store-group:last-child {
+  margin-bottom: 0;
+}
+
+.store-group-header {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  padding: 0 4px 8px;
+}
+
+.store-dot {
+  flex-shrink: 0;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.list li.removing {
+  opacity: 0;
+  transform: scale(0.94);
 }
 
 .checkbox {
@@ -399,11 +581,13 @@
   justify-content: center;
   color: #fff;
   padding: 0;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
 .checkbox svg {
   width: 16px;
   height: 16px;
+  animation: checkPop 0.18s ease;
 }
 
 li.done .checkbox {
@@ -436,7 +620,7 @@ li.done .checkbox {
   font-size: 13px;
   font-weight: 600;
   color: var(--accent);
-  background: var(--accent-bg, rgba(170, 59, 255, 0.12));
+  background: var(--accent-bg);
   border-radius: 8px;
   padding: 3px 8px;
   white-space: nowrap;
@@ -473,9 +657,15 @@ li.done .item-text {
 .edit-form {
   flex: 1;
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 6px;
   min-width: 0;
+}
+
+.edit-form-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
 }
 
 .edit-form input,
@@ -490,16 +680,21 @@ li.done .item-text {
   min-width: 0;
 }
 
-.edit-form input[type='text'] {
+.edit-form-row input[type='text'] {
   flex: 1;
 }
 
-.edit-form input[type='number'] {
+.edit-form-row input[type='number'] {
   flex: 0 0 60px;
 }
 
-.edit-form select {
+.edit-form-row select {
   flex: 0 0 64px;
+}
+
+.edit-form-row select.store-select,
+.add-bar-row select.store-select {
+  flex: 1;
 }
 
 .edit-form .save,
@@ -593,8 +788,10 @@ li.done .item-text {
   font-size: 24px;
   line-height: 1;
   padding: 0;
+  box-shadow: var(--shadow-sm);
 }
 
 .add-bar button:disabled {
   opacity: 0.4;
+  box-shadow: none;
 }

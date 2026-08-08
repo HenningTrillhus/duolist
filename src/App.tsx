@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent } from 'react'
+import type { FormEvent, ReactNode, UIEvent } from 'react'
 import { supabase } from './lib/supabase'
 import './App.css'
 
@@ -10,6 +10,7 @@ type Item = {
   done: boolean
   quantity: number | null
   unit: string | null
+  store: string | null
   added_by: UserName | null
   created_at: string
 }
@@ -21,16 +22,22 @@ type ShoppingList = {
   name: string
   type: ListType
   created_at: string
+  updated_at: string | null
 }
 
 type UserName = 'Nora' | 'Henning'
 
+type StoreOption = { name: string; color: string }
+
 const UNITS = ['stk', 'g', 'kg', 'ml', 'dl', 'l', 'pk'] as const
 type Unit = (typeof UNITS)[number]
+
+const CUSTOM_STORE = '__custom__'
 
 const ACTIVE_KEY = 'duolist-active-list'
 const USER_KEY = 'duolist-user'
 const THEME_KEY = 'duolist-theme'
+const REMOVE_ANIM_MS = 180
 
 type Theme = 'light' | 'dark'
 
@@ -40,6 +47,40 @@ const USER_COLORS: Record<UserName, { accent: string; bg: string }> = {
   Nora: { accent: '#38bdf8', bg: 'rgba(56, 189, 248, 0.18)' },
   Henning: { accent: '#1d4ed8', bg: 'rgba(29, 78, 216, 0.18)' },
 }
+
+// Representative brand colors, not official palettes — easy to tweak.
+const GROCERY_STORES: StoreOption[] = [
+  { name: 'Rema 1000', color: '#0060A9' },
+  { name: 'Kiwi', color: '#78BE21' },
+  { name: 'Coop Extra', color: '#EE7203' },
+  { name: 'Coop Mega', color: '#E2001A' },
+  { name: 'Coop Prix', color: '#00A19A' },
+  { name: 'Coop Obs', color: '#7B2D8E' },
+  { name: 'Meny', color: '#00543C' },
+  { name: 'Spar', color: '#C8102E' },
+  { name: 'Eurospar', color: '#0033A0' },
+  { name: 'Joker', color: '#D2691E' },
+  { name: 'Bunnpris', color: '#FFC72C' },
+]
+
+const SHOPPING_STORES: StoreOption[] = [
+  { name: 'IKEA', color: '#0A5EB0' },
+  { name: 'Jysk', color: '#D8262C' },
+  { name: 'Rusta', color: '#E67E22' },
+  { name: "Kitch'n", color: '#16A085' },
+  { name: 'Jernia', color: '#8E6C3A' },
+  { name: 'Clas Ohlson', color: '#5B2C6F' },
+  { name: 'Biltema', color: '#F1C40F' },
+  { name: 'Jula', color: '#2C3E92' },
+  { name: 'Obs Bygg', color: '#607D3B' },
+  { name: 'Europris', color: '#D35400' },
+  { name: 'Nille', color: '#E84393' },
+  { name: 'Kremmerhuset', color: '#A0522D' },
+  { name: 'XXL Sport', color: '#27AE60' },
+  { name: 'Elkjøp', color: '#17A2B8' },
+  { name: 'Power', color: '#E74C3C' },
+  { name: 'Lefdal', color: '#34495E' },
+]
 
 const LIST_TYPE_LABELS: Record<ListType, string> = {
   grocery: 'Matliste',
@@ -65,6 +106,16 @@ const LIST_TYPE_EMPTY_SUBTITLE: Record<ListType, string> = {
   shopping: 'Listen er tom',
 }
 
+function storesForType(type: ListType): StoreOption[] {
+  if (type === 'grocery') return GROCERY_STORES
+  if (type === 'shopping') return SHOPPING_STORES
+  return []
+}
+
+function storeColorFor(stores: StoreOption[], name: string): string {
+  return stores.find((s) => s.name === name)?.color ?? ''
+}
+
 function sortByCreatedAt<T extends { created_at: string }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
@@ -77,6 +128,47 @@ function loadTheme(): Theme {
   const stored = localStorage.getItem(THEME_KEY)
   if (stored === 'light' || stored === 'dark') return stored
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
+function formatUpdated(dateStr: string | null | undefined): string {
+  if (!dateStr) return ''
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return ''
+  const now = new Date()
+  const diffMin = Math.round((now.getTime() - date.getTime()) / 60000)
+  if (diffMin < 1) return 'nå nettopp'
+  if (diffMin < 60) return `${diffMin} min siden`
+  if (date.toDateString() === now.toDateString()) {
+    return `i dag kl. ${date.toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' })}`
+  }
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return 'i går'
+  const diffHr = Math.round(diffMin / 60)
+  if (diffHr < 24 * 7) return `${Math.floor(diffHr / 24)} d siden`
+  return date.toLocaleDateString('no-NO', { day: '2-digit', month: '2-digit', year: '2-digit' })
+}
+
+type StoreGroup = { store: string | null; color: string; items: Item[] }
+
+function groupByStore(items: Item[], stores: StoreOption[]): StoreGroup[] {
+  const map = new Map<string | null, Item[]>()
+  for (const item of items) {
+    const key = item.store
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(item)
+  }
+  const groups: StoreGroup[] = [...map.entries()].map(([store, groupItems]) => ({
+    store,
+    color: store ? storeColorFor(stores, store) : '',
+    items: groupItems,
+  }))
+  groups.sort((a, b) => {
+    if (a.store === null) return 1
+    if (b.store === null) return -1
+    return a.store.localeCompare(b.store, 'no')
+  })
+  return groups
 }
 
 function App() {
@@ -102,9 +194,14 @@ function App() {
     onConfirm: () => void
   } | null>(null)
 
+  const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
+  const [scrolled, setScrolled] = useState(false)
+
   const [text, setText] = useState('')
   const [quantity, setQuantity] = useState('')
   const [unit, setUnit] = useState<Unit>('stk')
+  const [storeChoice, setStoreChoice] = useState('')
+  const [customStore, setCustomStore] = useState('')
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
@@ -115,6 +212,8 @@ function App() {
   const [editText, setEditText] = useState('')
   const [editQuantity, setEditQuantity] = useState('')
   const [editUnit, setEditUnit] = useState<Unit>('stk')
+  const [editStoreChoice, setEditStoreChoice] = useState('')
+  const [editCustomStore, setEditCustomStore] = useState('')
 
   // Load lists once, seeding a default list on a brand new project.
   useEffect(() => {
@@ -187,6 +286,8 @@ function App() {
     if (!activeId) return
     localStorage.setItem(ACTIVE_KEY, activeId)
     setItems([])
+    setStoreChoice('')
+    setCustomStore('')
 
     let cancelled = false
     supabase
@@ -257,7 +358,15 @@ function App() {
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [userMenuOpen])
 
+  // Auto-dismiss transient error toasts.
+  useEffect(() => {
+    if (!error) return
+    const t = setTimeout(() => setError(null), 4500)
+    return () => clearTimeout(t)
+  }, [error])
+
   const activeList = lists.find((l) => l.id === activeId) ?? lists[0]
+  const availableStores = activeList ? storesForType(activeList.type) : []
 
   const chooseUser = (name: UserName) => {
     localStorage.setItem(USER_KEY, name)
@@ -271,71 +380,98 @@ function App() {
     if (!value || !activeList) return
     const parsedQuantity = Number(quantity)
     const hasQuantity = quantity.trim() !== '' && parsedQuantity > 0
+    const originalQuantity = quantity
+    const finalStore = storeChoice === CUSTOM_STORE ? customStore.trim() || null : storeChoice || null
+
+    const optimisticItem: Item = {
+      id: crypto.randomUUID(),
+      list_id: activeList.id,
+      text: value,
+      done: false,
+      quantity: hasQuantity ? parsedQuantity : null,
+      unit: hasQuantity ? unit : null,
+      store: finalStore,
+      added_by: currentUser,
+      created_at: new Date().toISOString(),
+    }
+    setItems((prev) => sortByCreatedAt([...prev, optimisticItem]))
     setText('')
     setQuantity('')
-    const { data, error } = await supabase
-      .from('items')
-      .insert({
-        list_id: activeList.id,
-        text: value,
-        quantity: hasQuantity ? parsedQuantity : null,
-        unit: hasQuantity ? unit : null,
-        added_by: currentUser,
-      })
-      .select()
-      .single()
+    setCustomStore('')
+
+    const { error } = await supabase.from('items').insert(optimisticItem)
     if (error) {
+      setItems((prev) => prev.filter((i) => i.id !== optimisticItem.id))
       setError(error.message)
-      return
+      setText(value)
+      setQuantity(originalQuantity)
     }
-    setItems((prev) => (prev.some((i) => i.id === data.id) ? prev : sortByCreatedAt([...prev, data])))
   }
 
   const toggleItem = async (item: Item) => {
-    const { data, error } = await supabase
-      .from('items')
-      .update({ done: !item.done })
-      .eq('id', item.id)
-      .select()
-      .single()
+    const nextDone = !item.done
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, done: nextDone } : i)))
+    const { error } = await supabase.from('items').update({ done: nextDone }).eq('id', item.id)
     if (error) {
+      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, done: item.done } : i)))
       setError(error.message)
-      return
     }
-    setItems((prev) => prev.map((i) => (i.id === data.id ? data : i)))
   }
 
-  const deleteItem = async (id: string) => {
-    setItems((prev) => prev.filter((i) => i.id !== id))
-    const { error } = await supabase.from('items').delete().eq('id', id)
-    if (error) setError(error.message)
+  const deleteItem = async (item: Item) => {
+    setItems((prev) => prev.filter((i) => i.id !== item.id))
+    const { error } = await supabase.from('items').delete().eq('id', item.id)
+    if (error) {
+      setItems((prev) => sortByCreatedAt([...prev, item]))
+      setError(error.message)
+    }
   }
 
-  const clearDone = async () => {
-    if (!activeList) return
-    const doneIds = items.filter((i) => i.done).map((i) => i.id)
-    setItems((prev) => prev.filter((i) => !i.done))
+  const clearDone = async (doneItems: Item[]) => {
+    if (doneItems.length === 0) return
+    const doneIds = doneItems.map((i) => i.id)
+    setItems((prev) => prev.filter((i) => !doneIds.includes(i.id)))
     const { error } = await supabase.from('items').delete().in('id', doneIds)
-    if (error) setError(error.message)
+    if (error) {
+      setItems((prev) => sortByCreatedAt([...prev, ...doneItems]))
+      setError(error.message)
+    }
   }
 
   const askDeleteItem = (item: Item) => {
     setConfirmDialog({
       message: `Slette «${item.text}»?`,
       onConfirm: () => {
-        deleteItem(item.id)
         setConfirmDialog(null)
+        setRemovingIds((prev) => new Set(prev).add(item.id))
+        setTimeout(() => {
+          deleteItem(item)
+          setRemovingIds((prev) => {
+            const next = new Set(prev)
+            next.delete(item.id)
+            return next
+          })
+        }, REMOVE_ANIM_MS)
       },
     })
   }
 
   const askClearDone = () => {
-    const count = items.filter((i) => i.done).length
+    const doneItems = items.filter((i) => i.done)
     setConfirmDialog({
-      message: `Fjerne ${count} fullførte ${count === 1 ? 'vare' : 'varer'}?`,
+      message: `Fjerne ${doneItems.length} fullførte ${doneItems.length === 1 ? 'vare' : 'varer'}?`,
       onConfirm: () => {
-        clearDone()
         setConfirmDialog(null)
+        const doneIds = doneItems.map((i) => i.id)
+        setRemovingIds((prev) => new Set([...prev, ...doneIds]))
+        setTimeout(() => {
+          clearDone(doneItems)
+          setRemovingIds((prev) => {
+            const next = new Set(prev)
+            doneIds.forEach((id) => next.delete(id))
+            return next
+          })
+        }, REMOVE_ANIM_MS)
       },
     })
   }
@@ -372,6 +508,16 @@ function App() {
     setEditText(item.text)
     setEditQuantity(item.quantity != null ? String(item.quantity) : '')
     setEditUnit((item.unit as Unit) ?? 'stk')
+    if (item.store && activeList && storesForType(activeList.type).some((s) => s.name === item.store)) {
+      setEditStoreChoice(item.store)
+      setEditCustomStore('')
+    } else if (item.store) {
+      setEditStoreChoice(CUSTOM_STORE)
+      setEditCustomStore(item.store)
+    } else {
+      setEditStoreChoice('')
+      setEditCustomStore('')
+    }
   }
 
   const cancelEdit = () => setEditingId(null)
@@ -383,26 +529,182 @@ function App() {
     if (!value) return
     const parsedQuantity = Number(editQuantity)
     const hasQuantity = editQuantity.trim() !== '' && parsedQuantity > 0
-    const { data, error } = await supabase
-      .from('items')
-      .update({
-        text: value,
-        quantity: hasQuantity ? parsedQuantity : null,
-        unit: hasQuantity ? editUnit : null,
-      })
-      .eq('id', editingId)
-      .select()
-      .single()
-    if (error) {
-      setError(error.message)
-      return
+    const finalStore = editStoreChoice === CUSTOM_STORE ? editCustomStore.trim() || null : editStoreChoice || null
+    const previous = items.find((i) => i.id === editingId)
+
+    const updated = {
+      text: value,
+      quantity: hasQuantity ? parsedQuantity : null,
+      unit: hasQuantity ? editUnit : null,
+      store: finalStore,
     }
-    setItems((prev) => prev.map((i) => (i.id === data.id ? data : i)))
+
+    setItems((prev) => prev.map((i) => (i.id === editingId ? { ...i, ...updated } : i)))
     setEditingId(null)
+
+    const { error } = await supabase.from('items').update(updated).eq('id', editingId)
+    if (error && previous) {
+      setItems((prev) => prev.map((i) => (i.id === previous.id ? previous : i)))
+      setError(error.message)
+    }
+  }
+
+  const onListScroll = (e: UIEvent<HTMLElement>) => {
+    setScrolled(e.currentTarget.scrollTop > 4)
   }
 
   const remaining = items.filter((item) => !item.done).length
   const hasDone = items.some((item) => item.done)
+
+  const renderItem = (item: Item) => {
+    const owner = item.added_by
+    const style = owner ? { borderLeftColor: USER_COLORS[owner].accent } : undefined
+    const classes = [
+      item.done ? 'done' : '',
+      removingIds.has(item.id) ? 'removing' : '',
+      editingId === item.id ? 'editing' : '',
+    ]
+      .filter(Boolean)
+      .join(' ')
+    return (
+      <li key={item.id} className={classes} style={style}>
+        <button
+          type="button"
+          className="checkbox"
+          aria-label={item.done ? 'Merk som ikke fullført' : 'Merk som fullført'}
+          aria-pressed={item.done}
+          onClick={() => toggleItem(item)}
+        >
+          {item.done && (
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M5 13l4 4L19 7"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="3"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          )}
+        </button>
+
+        {editingId === item.id ? (
+          <form className="edit-form" onSubmit={saveEdit}>
+            <div className="edit-form-row">
+              <input
+                type="text"
+                autoComplete="off"
+                value={editText}
+                onChange={(e) => setEditText(e.target.value)}
+                autoFocus
+              />
+              <button type="submit" className="save" aria-label="Lagre" disabled={!editText.trim()}>
+                ✓
+              </button>
+              <button type="button" className="cancel-edit" aria-label="Avbryt" onClick={cancelEdit}>
+                ×
+              </button>
+            </div>
+            {activeList && activeList.type !== 'todo' && (
+              <div className="edit-form-row">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min="0"
+                  step="any"
+                  placeholder="Antall"
+                  className="qty-input"
+                  value={editQuantity}
+                  onChange={(e) => setEditQuantity(e.target.value)}
+                />
+                <select value={editUnit} onChange={(e) => setEditUnit(e.target.value as Unit)}>
+                  {UNITS.map((u) => (
+                    <option key={u} value={u}>
+                      {u}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+            {activeList && activeList.type !== 'todo' && (
+              <div className="edit-form-row">
+                <select
+                  className="store-select"
+                  value={editStoreChoice}
+                  onChange={(e) => setEditStoreChoice(e.target.value)}
+                >
+                  <option value="">Butikk (valgfritt)</option>
+                  {storesForType(activeList.type).map((s) => (
+                    <option key={s.name} value={s.name}>
+                      {s.name}
+                    </option>
+                  ))}
+                  <option value={CUSTOM_STORE}>Annet…</option>
+                </select>
+                {editStoreChoice === CUSTOM_STORE && (
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    placeholder="Butikknavn"
+                    value={editCustomStore}
+                    onChange={(e) => setEditCustomStore(e.target.value)}
+                  />
+                )}
+              </div>
+            )}
+          </form>
+        ) : (
+          <>
+            <button type="button" className="item-main" onClick={() => startEdit(item)}>
+              <span className="item-text">{item.text}</span>
+              {item.quantity != null && (
+                <span className="item-qty">
+                  {item.quantity} {item.unit}
+                </span>
+              )}
+            </button>
+            <button
+              type="button"
+              className="delete"
+              aria-label={`Slett ${item.text}`}
+              onClick={() => askDeleteItem(item)}
+            >
+              ×
+            </button>
+          </>
+        )}
+      </li>
+    )
+  }
+
+  let listContent: ReactNode = null
+  if (activeList) {
+    if (items.length === 0) {
+      listContent = <div className="empty">{LIST_TYPE_EMPTY[activeList.type]}</div>
+    } else if (activeList.type === 'todo') {
+      listContent = <ul>{items.map(renderItem)}</ul>
+    } else {
+      const groups = groupByStore(items, availableStores)
+      if (groups.length === 1 && groups[0].store === null) {
+        listContent = <ul>{items.map(renderItem)}</ul>
+      } else {
+        listContent = (
+          <>
+            {groups.map((group) => (
+              <div className="store-group" key={group.store ?? '__none__'}>
+                <div className="store-group-header">
+                  <span className="store-dot" style={{ background: group.color || 'var(--text)' }} />
+                  {group.store ?? 'Uten butikk'}
+                </div>
+                <ul>{group.items.map(renderItem)}</ul>
+              </div>
+            ))}
+          </>
+        )
+      }
+    }
+  }
 
   const userPicker = !currentUser && (
     <div className="modal-backdrop">
@@ -427,7 +729,9 @@ function App() {
   if (loading || !activeList) {
     return (
       <div className="app">
-        <div className="loading">{error ? `Feil: ${error}` : 'Laster…'}</div>
+        <div className="loading">
+          {error ? <p className="loading-error">Feil: {error}</p> : <div className="spinner" aria-label="Laster" />}
+        </div>
         {userPicker}
       </div>
     )
@@ -435,7 +739,7 @@ function App() {
 
   return (
     <div className="app">
-      <header className="header">
+      <header className={`header ${scrolled ? 'scrolled' : ''}`}>
         <div className="header-top">
           <button
             type="button"
@@ -481,18 +785,29 @@ function App() {
         {switcherOpen && (
           <div className="switcher-panel" ref={panelRef}>
             <ul className="switcher-list">
-              {lists.map((l) => (
-                <li key={l.id}>
-                  <button
-                    type="button"
-                    className={l.id === activeList.id ? 'active' : ''}
-                    onClick={() => selectList(l.id)}
-                  >
-                    <span className="switcher-name">{l.name}</span>
-                    <span className="switcher-type">{LIST_TYPE_LABELS[l.type]}</span>
-                  </button>
-                </li>
-              ))}
+              {lists.map((l) => {
+                const updated = formatUpdated(l.updated_at)
+                return (
+                  <li key={l.id}>
+                    <button
+                      type="button"
+                      className={l.id === activeList.id ? 'active' : ''}
+                      onClick={() => selectList(l.id)}
+                    >
+                      <span className="switcher-name">{l.name}</span>
+                      <span className="switcher-meta">
+                        <span className="switcher-type">{LIST_TYPE_LABELS[l.type]}</span>
+                        {updated && (
+                          <>
+                            <span className="switcher-dot">·</span>
+                            <span className="switcher-updated">{updated}</span>
+                          </>
+                        )}
+                      </span>
+                    </button>
+                  </li>
+                )
+              })}
             </ul>
 
             {creating ? (
@@ -583,102 +898,8 @@ function App() {
         )}
       </header>
 
-      <main className="list">
-        {items.length === 0 ? (
-          <div className="empty">{LIST_TYPE_EMPTY[activeList.type]}</div>
-        ) : (
-          <ul>
-            {items.map((item) => {
-              const owner = item.added_by
-              const style = owner ? { borderLeftColor: USER_COLORS[owner].accent } : undefined
-              return (
-                <li key={item.id} className={item.done ? 'done' : ''} style={style}>
-                  <button
-                    type="button"
-                    className="checkbox"
-                    aria-label={item.done ? 'Merk som ikke fullført' : 'Merk som fullført'}
-                    aria-pressed={item.done}
-                    onClick={() => toggleItem(item)}
-                  >
-                    {item.done && (
-                      <svg viewBox="0 0 24 24" aria-hidden="true">
-                        <path
-                          d="M5 13l4 4L19 7"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth="3"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                        />
-                      </svg>
-                    )}
-                  </button>
-
-                  {editingId === item.id ? (
-                    <form className="edit-form" onSubmit={saveEdit}>
-                      <input
-                        type="text"
-                        autoComplete="off"
-                        value={editText}
-                        onChange={(e) => setEditText(e.target.value)}
-                        autoFocus
-                      />
-                      {activeList.type !== 'todo' && (
-                        <>
-                          <input
-                            type="number"
-                            inputMode="decimal"
-                            min="0"
-                            step="any"
-                            placeholder="Antall"
-                            className="qty-input"
-                            value={editQuantity}
-                            onChange={(e) => setEditQuantity(e.target.value)}
-                          />
-                          <select
-                            value={editUnit}
-                            onChange={(e) => setEditUnit(e.target.value as Unit)}
-                          >
-                            {UNITS.map((u) => (
-                              <option key={u} value={u}>
-                                {u}
-                              </option>
-                            ))}
-                          </select>
-                        </>
-                      )}
-                      <button type="submit" className="save" aria-label="Lagre" disabled={!editText.trim()}>
-                        ✓
-                      </button>
-                      <button type="button" className="cancel-edit" aria-label="Avbryt" onClick={cancelEdit}>
-                        ×
-                      </button>
-                    </form>
-                  ) : (
-                    <>
-                      <button type="button" className="item-main" onClick={() => startEdit(item)}>
-                        <span className="item-text">{item.text}</span>
-                        {item.quantity != null && (
-                          <span className="item-qty">
-                            {item.quantity} {item.unit}
-                          </span>
-                        )}
-                      </button>
-                      <button
-                        type="button"
-                        className="delete"
-                        aria-label={`Slett ${item.text}`}
-                        onClick={() => askDeleteItem(item)}
-                      >
-                        ×
-                      </button>
-                    </>
-                  )}
-                </li>
-              )
-            })}
-          </ul>
-        )}
+      <main className="list" onScroll={onListScroll}>
+        {listContent}
 
         {hasDone && (
           <button type="button" className="clear-done" onClick={askClearDone}>
@@ -731,6 +952,28 @@ function App() {
             </button>
           </div>
         )}
+        {activeList.type !== 'todo' && (
+          <div className="add-bar-row store-row">
+            <select className="store-select" value={storeChoice} onChange={(e) => setStoreChoice(e.target.value)}>
+              <option value="">Butikk (valgfritt)</option>
+              {availableStores.map((s) => (
+                <option key={s.name} value={s.name}>
+                  {s.name}
+                </option>
+              ))}
+              <option value={CUSTOM_STORE}>Annet…</option>
+            </select>
+            {storeChoice === CUSTOM_STORE && (
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder="Butikknavn"
+                value={customStore}
+                onChange={(e) => setCustomStore(e.target.value)}
+              />
+            )}
+          </div>
+        )}
       </form>
 
       {confirmDialog && (
@@ -746,6 +989,15 @@ function App() {
               </button>
             </div>
           </div>
+        </div>
+      )}
+
+      {error && (
+        <div className="toast" role="alert">
+          <span>{error}</span>
+          <button type="button" onClick={() => setError(null)} aria-label="Lukk">
+            ×
+          </button>
         </div>
       )}
 
