@@ -14,6 +14,7 @@ create table if not exists items (
   done boolean not null default false,
   quantity numeric,
   unit text,
+  added_by text check (added_by in ('Nora', 'Henning')),
   created_at timestamptz not null default now()
 );
 

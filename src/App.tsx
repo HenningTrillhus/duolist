@@ -10,6 +10,7 @@ type Item = {
   done: boolean
   quantity: number | null
   unit: string | null
+  added_by: UserName | null
   created_at: string
 }
 
@@ -22,9 +23,20 @@ type ShoppingList = {
   created_at: string
 }
 
+type UserName = 'Nora' | 'Henning'
+
 const UNITS = ['stk', 'g', 'kg', 'ml', 'dl', 'l', 'pk'] as const
+type Unit = (typeof UNITS)[number]
 
 const ACTIVE_KEY = 'duolist-active-list'
+const USER_KEY = 'duolist-user'
+
+const USERS: UserName[] = ['Nora', 'Henning']
+
+const USER_COLORS: Record<UserName, { accent: string; bg: string }> = {
+  Nora: { accent: '#38bdf8', bg: 'rgba(56, 189, 248, 0.18)' },
+  Henning: { accent: '#1d4ed8', bg: 'rgba(29, 78, 216, 0.18)' },
+}
 
 const LIST_TYPE_LABELS: Record<ListType, string> = {
   grocery: 'Matliste',
@@ -54,6 +66,10 @@ function sortByCreatedAt<T extends { created_at: string }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => a.created_at.localeCompare(b.created_at))
 }
 
+function isUserName(value: string | null): value is UserName {
+  return value === 'Nora' || value === 'Henning'
+}
+
 function App() {
   const [lists, setLists] = useState<ShoppingList[]>([])
   const [items, setItems] = useState<Item[]>([])
@@ -63,14 +79,26 @@ function App() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
+  const [currentUser, setCurrentUser] = useState<UserName | null>(() => {
+    const stored = localStorage.getItem(USER_KEY)
+    return isUserName(stored) ? stored : null
+  })
+  const [userMenuOpen, setUserMenuOpen] = useState(false)
+  const userPanelRef = useRef<HTMLDivElement>(null)
+
   const [text, setText] = useState('')
   const [quantity, setQuantity] = useState('')
-  const [unit, setUnit] = useState<(typeof UNITS)[number]>('stk')
+  const [unit, setUnit] = useState<Unit>('stk')
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newType, setNewType] = useState<ListType>('grocery')
   const panelRef = useRef<HTMLDivElement>(null)
+
+  const [editingId, setEditingId] = useState<string | null>(null)
+  const [editText, setEditText] = useState('')
+  const [editQuantity, setEditQuantity] = useState('')
+  const [editUnit, setEditUnit] = useState<Unit>('stk')
 
   // Load lists once, seeding a default list on a brand new project.
   useEffect(() => {
@@ -197,7 +225,24 @@ function App() {
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [switcherOpen])
 
+  useEffect(() => {
+    if (!userMenuOpen) return
+    const onClickOutside = (e: MouseEvent) => {
+      if (userPanelRef.current && !userPanelRef.current.contains(e.target as Node)) {
+        setUserMenuOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [userMenuOpen])
+
   const activeList = lists.find((l) => l.id === activeId) ?? lists[0]
+
+  const chooseUser = (name: UserName) => {
+    localStorage.setItem(USER_KEY, name)
+    setCurrentUser(name)
+    setUserMenuOpen(false)
+  }
 
   const addItem = async (e: FormEvent) => {
     e.preventDefault()
@@ -214,6 +259,7 @@ function App() {
         text: value,
         quantity: hasQuantity ? parsedQuantity : null,
         unit: hasQuantity ? unit : null,
+        added_by: currentUser,
       })
       .select()
       .single()
@@ -279,13 +325,68 @@ function App() {
     setSwitcherOpen(false)
   }
 
+  const startEdit = (item: Item) => {
+    setEditingId(item.id)
+    setEditText(item.text)
+    setEditQuantity(item.quantity != null ? String(item.quantity) : '')
+    setEditUnit((item.unit as Unit) ?? 'stk')
+  }
+
+  const cancelEdit = () => setEditingId(null)
+
+  const saveEdit = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!editingId) return
+    const value = editText.trim()
+    if (!value) return
+    const parsedQuantity = Number(editQuantity)
+    const hasQuantity = editQuantity.trim() !== '' && parsedQuantity > 0
+    const { data, error } = await supabase
+      .from('items')
+      .update({
+        text: value,
+        quantity: hasQuantity ? parsedQuantity : null,
+        unit: hasQuantity ? editUnit : null,
+      })
+      .eq('id', editingId)
+      .select()
+      .single()
+    if (error) {
+      setError(error.message)
+      return
+    }
+    setItems((prev) => prev.map((i) => (i.id === data.id ? data : i)))
+    setEditingId(null)
+  }
+
   const remaining = items.filter((item) => !item.done).length
   const hasDone = items.some((item) => item.done)
+
+  const userPicker = !currentUser && (
+    <div className="modal-backdrop">
+      <div className="modal-card">
+        <h2>Hvem er du?</h2>
+        <div className="user-options">
+          {USERS.map((name) => (
+            <button
+              key={name}
+              type="button"
+              style={{ background: USER_COLORS[name].accent }}
+              onClick={() => chooseUser(name)}
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+      </div>
+    </div>
+  )
 
   if (loading || !activeList) {
     return (
       <div className="app">
         <div className="loading">{error ? `Feil: ${error}` : 'Laster…'}</div>
+        {userPicker}
       </div>
     )
   }
@@ -293,24 +394,42 @@ function App() {
   return (
     <div className="app">
       <header className="header">
-        <button
-          type="button"
-          className="list-switch"
-          onClick={() => setSwitcherOpen((v) => !v)}
-          aria-expanded={switcherOpen}
-        >
-          <span className="list-name">{activeList.name}</span>
-          <svg className={`chevron ${switcherOpen ? 'open' : ''}`} viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M6 9l6 6 6-6"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="2.5"
-              strokeLinecap="round"
-              strokeLinejoin="round"
-            />
-          </svg>
-        </button>
+        <div className="header-top">
+          <button
+            type="button"
+            className="list-switch"
+            onClick={() => setSwitcherOpen((v) => !v)}
+            aria-expanded={switcherOpen}
+          >
+            <span className="list-name">{activeList.name}</span>
+            <svg className={`chevron ${switcherOpen ? 'open' : ''}`} viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M6 9l6 6 6-6"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
+
+          <button
+            type="button"
+            className="user-button"
+            onClick={() => setUserMenuOpen((v) => !v)}
+            aria-label="Bytt bruker"
+            aria-expanded={userMenuOpen}
+          >
+            <span
+              className="user-avatar"
+              style={{ background: currentUser ? USER_COLORS[currentUser].accent : undefined }}
+            >
+              {currentUser ? currentUser[0] : '?'}
+            </span>
+          </button>
+        </div>
+
         <p className="subtitle">
           {items.length === 0
             ? LIST_TYPE_EMPTY_SUBTITLE[activeList.type]
@@ -367,6 +486,22 @@ function App() {
             )}
           </div>
         )}
+
+        {userMenuOpen && (
+          <div className="user-panel" ref={userPanelRef}>
+            {USERS.map((name) => (
+              <button
+                key={name}
+                type="button"
+                className={currentUser === name ? 'active' : ''}
+                onClick={() => chooseUser(name)}
+              >
+                <span className="user-dot" style={{ background: USER_COLORS[name].accent }} />
+                {name}
+              </button>
+            ))}
+          </div>
+        )}
       </header>
 
       <main className="list">
@@ -374,44 +509,95 @@ function App() {
           <div className="empty">{LIST_TYPE_EMPTY[activeList.type]}</div>
         ) : (
           <ul>
-            {items.map((item) => (
-              <li key={item.id} className={item.done ? 'done' : ''}>
-                <button
-                  type="button"
-                  className="checkbox"
-                  aria-label={item.done ? 'Merk som ikke fullført' : 'Merk som fullført'}
-                  aria-pressed={item.done}
-                  onClick={() => toggleItem(item)}
-                >
-                  {item.done && (
-                    <svg viewBox="0 0 24 24" aria-hidden="true">
-                      <path
-                        d="M5 13l4 4L19 7"
-                        fill="none"
-                        stroke="currentColor"
-                        strokeWidth="3"
-                        strokeLinecap="round"
-                        strokeLinejoin="round"
+            {items.map((item) => {
+              const owner = item.added_by
+              const style = owner ? { borderLeftColor: USER_COLORS[owner].accent } : undefined
+              return (
+                <li key={item.id} className={item.done ? 'done' : ''} style={style}>
+                  <button
+                    type="button"
+                    className="checkbox"
+                    aria-label={item.done ? 'Merk som ikke fullført' : 'Merk som fullført'}
+                    aria-pressed={item.done}
+                    onClick={() => toggleItem(item)}
+                  >
+                    {item.done && (
+                      <svg viewBox="0 0 24 24" aria-hidden="true">
+                        <path
+                          d="M5 13l4 4L19 7"
+                          fill="none"
+                          stroke="currentColor"
+                          strokeWidth="3"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                        />
+                      </svg>
+                    )}
+                  </button>
+
+                  {editingId === item.id ? (
+                    <form className="edit-form" onSubmit={saveEdit}>
+                      <input
+                        type="text"
+                        autoComplete="off"
+                        value={editText}
+                        onChange={(e) => setEditText(e.target.value)}
+                        autoFocus
                       />
-                    </svg>
+                      {activeList.type !== 'todo' && (
+                        <>
+                          <input
+                            type="number"
+                            inputMode="decimal"
+                            min="0"
+                            step="any"
+                            placeholder="Antall"
+                            className="qty-input"
+                            value={editQuantity}
+                            onChange={(e) => setEditQuantity(e.target.value)}
+                          />
+                          <select
+                            value={editUnit}
+                            onChange={(e) => setEditUnit(e.target.value as Unit)}
+                          >
+                            {UNITS.map((u) => (
+                              <option key={u} value={u}>
+                                {u}
+                              </option>
+                            ))}
+                          </select>
+                        </>
+                      )}
+                      <button type="submit" className="save" aria-label="Lagre" disabled={!editText.trim()}>
+                        ✓
+                      </button>
+                      <button type="button" className="cancel-edit" aria-label="Avbryt" onClick={cancelEdit}>
+                        ×
+                      </button>
+                    </form>
+                  ) : (
+                    <>
+                      <button type="button" className="item-main" onClick={() => startEdit(item)}>
+                        <span className="item-text">{item.text}</span>
+                        {item.quantity != null && (
+                          <span className="item-qty">
+                            {item.quantity} {item.unit}
+                          </span>
+                        )}
+                      </button>
+                      <button
+                        type="button"
+                        className="delete"
+                        aria-label={`Slett ${item.text}`}
+                        onClick={() => deleteItem(item.id)}
+                      >
+                        ×
+                      </button>
+                    </>
                   )}
-                </button>
-                <span className="item-text">{item.text}</span>
-                {item.quantity != null && (
-                  <span className="item-qty">
-                    {item.quantity} {item.unit}
-                  </span>
-                )}
-                <button
-                  type="button"
-                  className="delete"
-                  aria-label={`Slett ${item.text}`}
-                  onClick={() => deleteItem(item.id)}
-                >
-                  ×
-                </button>
-              </li>
-            ))}
+                </li>
+              )
+            })}
           </ul>
         )}
 
@@ -453,7 +639,7 @@ function App() {
             <select
               className="unit-select"
               value={unit}
-              onChange={(e) => setUnit(e.target.value as (typeof UNITS)[number])}
+              onChange={(e) => setUnit(e.target.value as Unit)}
             >
               {UNITS.map((u) => (
                 <option key={u} value={u}>
@@ -467,6 +653,8 @@ function App() {
           </div>
         )}
       </form>
+
+      {userPicker}
     </div>
   )
 }
