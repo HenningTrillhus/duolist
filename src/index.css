@@ -31,6 +31,27 @@
   }
 }
 
+/* Explicit overrides win over the system preference above, regardless of source order. */
+:root[data-theme='dark'] {
+  --text: #9ca3af;
+  --text-h: #f3f4f6;
+  --bg: #0e0f13;
+  --card: #1c1d24;
+  --border: #2e303a;
+  --accent: #c084fc;
+  --accent-border: rgba(192, 132, 252, 0.5);
+}
+
+:root[data-theme='light'] {
+  --text: #6b6375;
+  --text-h: #08060d;
+  --bg: #fff;
+  --card: #f4f3f6;
+  --border: #e5e4e7;
+  --accent: #aa3bff;
+  --accent-border: rgba(170, 59, 255, 0.5);
+}
+
 * {
   box-sizing: border-box;
   -webkit-tap-highlight-color: transparent;

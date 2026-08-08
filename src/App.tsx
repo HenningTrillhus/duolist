@@ -30,6 +30,9 @@ type Unit = (typeof UNITS)[number]
 
 const ACTIVE_KEY = 'duolist-active-list'
 const USER_KEY = 'duolist-user'
+const THEME_KEY = 'duolist-theme'
+
+type Theme = 'light' | 'dark'
 
 const USERS: UserName[] = ['Nora', 'Henning']
 
@@ -70,6 +73,12 @@ function isUserName(value: string | null): value is UserName {
   return value === 'Nora' || value === 'Henning'
 }
 
+function loadTheme(): Theme {
+  const stored = localStorage.getItem(THEME_KEY)
+  if (stored === 'light' || stored === 'dark') return stored
+  return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
+}
+
 function App() {
   const [lists, setLists] = useState<ShoppingList[]>([])
   const [items, setItems] = useState<Item[]>([])
@@ -85,6 +94,13 @@ function App() {
   })
   const [userMenuOpen, setUserMenuOpen] = useState(false)
   const userPanelRef = useRef<HTMLDivElement>(null)
+
+  const [theme, setTheme] = useState<Theme>(loadTheme)
+
+  const [confirmDialog, setConfirmDialog] = useState<{
+    message: string
+    onConfirm: () => void
+  } | null>(null)
 
   const [text, setText] = useState('')
   const [quantity, setQuantity] = useState('')
@@ -226,6 +242,11 @@ function App() {
   }, [switcherOpen])
 
   useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme)
+    localStorage.setItem(THEME_KEY, theme)
+  }, [theme])
+
+  useEffect(() => {
     if (!userMenuOpen) return
     const onClickOutside = (e: MouseEvent) => {
       if (userPanelRef.current && !userPanelRef.current.contains(e.target as Node)) {
@@ -296,6 +317,27 @@ function App() {
     setItems((prev) => prev.filter((i) => !i.done))
     const { error } = await supabase.from('items').delete().in('id', doneIds)
     if (error) setError(error.message)
+  }
+
+  const askDeleteItem = (item: Item) => {
+    setConfirmDialog({
+      message: `Slette «${item.text}»?`,
+      onConfirm: () => {
+        deleteItem(item.id)
+        setConfirmDialog(null)
+      },
+    })
+  }
+
+  const askClearDone = () => {
+    const count = items.filter((i) => i.done).length
+    setConfirmDialog({
+      message: `Fjerne ${count} fullførte ${count === 1 ? 'vare' : 'varer'}?`,
+      onConfirm: () => {
+        clearDone()
+        setConfirmDialog(null)
+      },
+    })
   }
 
   const selectList = (id: string) => {
@@ -500,6 +542,43 @@ function App() {
                 {name}
               </button>
             ))}
+
+            <div className="theme-toggle">
+              <button
+                type="button"
+                className={theme === 'light' ? 'active' : ''}
+                onClick={() => setTheme('light')}
+                aria-label="Lys modus"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" strokeWidth="2" />
+                  <path
+                    d="M12 2.5v2.5M12 19v2.5M21.5 12H19M5 12H2.5M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8M18.4 18.4l-1.8-1.8M7.4 7.4 5.6 5.6"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinecap="round"
+                  />
+                </svg>
+                Lys
+              </button>
+              <button
+                type="button"
+                className={theme === 'dark' ? 'active' : ''}
+                onClick={() => setTheme('dark')}
+                aria-label="Mørk modus"
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="2"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Mørk
+              </button>
+            </div>
           </div>
         )}
       </header>
@@ -589,7 +668,7 @@ function App() {
                         type="button"
                         className="delete"
                         aria-label={`Slett ${item.text}`}
-                        onClick={() => deleteItem(item.id)}
+                        onClick={() => askDeleteItem(item)}
                       >
                         ×
                       </button>
@@ -602,7 +681,7 @@ function App() {
         )}
 
         {hasDone && (
-          <button type="button" className="clear-done" onClick={clearDone}>
+          <button type="button" className="clear-done" onClick={askClearDone}>
             Fjern fullførte
           </button>
         )}
@@ -653,6 +732,22 @@ function App() {
           </div>
         )}
       </form>
+
+      {confirmDialog && (
+        <div className="modal-backdrop" onClick={() => setConfirmDialog(null)}>
+          <div className="modal-card" onClick={(e) => e.stopPropagation()}>
+            <p className="confirm-message">{confirmDialog.message}</p>
+            <div className="confirm-actions">
+              <button type="button" className="cancel" onClick={() => setConfirmDialog(null)}>
+                Avbryt
+              </button>
+              <button type="button" className="danger" onClick={confirmDialog.onConfirm}>
+                Slett
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {userPicker}
     </div>
