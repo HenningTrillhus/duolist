@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import type { FormEvent, ReactNode, UIEvent } from 'react'
+import type { ChangeEvent, FormEvent, ReactNode, UIEvent } from 'react'
 import { supabase } from './lib/supabase'
 import './App.css'
 
@@ -11,6 +11,8 @@ type Item = {
   quantity: number | null
   unit: string | null
   store: string | null
+  image_url: string | null
+  link_url: string | null
   added_by: UserName | null
   created_at: string
 }
@@ -149,6 +151,30 @@ function formatUpdated(dateStr: string | null | undefined): string {
   return date.toLocaleDateString('no-NO', { day: '2-digit', month: '2-digit', year: '2-digit' })
 }
 
+const STORAGE_BUCKET = 'item-files'
+const MAX_IMAGE_BYTES = 8 * 1024 * 1024
+
+function normalizeLink(raw: string): string | null {
+  const trimmed = raw.trim()
+  if (!trimmed) return null
+  return /^https?:\/\//i.test(trimmed) ? trimmed : `https://${trimmed}`
+}
+
+function linkLabel(url: string): string {
+  try {
+    return new URL(url).hostname.replace(/^www\./, '')
+  } catch {
+    return url
+  }
+}
+
+function extractStoragePath(url: string): string | null {
+  const marker = `/${STORAGE_BUCKET}/`
+  const idx = url.indexOf(marker)
+  if (idx === -1) return null
+  return url.slice(idx + marker.length)
+}
+
 type StoreGroup = { store: string | null; color: string; items: Item[] }
 
 function groupByStore(items: Item[], stores: StoreOption[]): StoreGroup[] {
@@ -208,12 +234,23 @@ function App() {
   const [newType, setNewType] = useState<ListType>('grocery')
   const panelRef = useRef<HTMLDivElement>(null)
 
+  const [attachOpen, setAttachOpen] = useState(false)
+  const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
+  const [pendingImagePreview, setPendingImagePreview] = useState<string | null>(null)
+  const [pendingLink, setPendingLink] = useState('')
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
   const [editingId, setEditingId] = useState<string | null>(null)
   const [editText, setEditText] = useState('')
   const [editQuantity, setEditQuantity] = useState('')
   const [editUnit, setEditUnit] = useState<Unit>('stk')
   const [editStoreChoice, setEditStoreChoice] = useState('')
   const [editCustomStore, setEditCustomStore] = useState('')
+  const [editImageFile, setEditImageFile] = useState<File | null>(null)
+  const [editImagePreview, setEditImagePreview] = useState<string | null>(null)
+  const [editImageRemoved, setEditImageRemoved] = useState(false)
+  const [editLink, setEditLink] = useState('')
+  const editFileInputRef = useRef<HTMLInputElement>(null)
 
   // Load lists once, seeding a default list on a brand new project.
   useEffect(() => {
@@ -288,6 +325,10 @@ function App() {
     setItems([])
     setStoreChoice('')
     setCustomStore('')
+    setAttachOpen(false)
+    setPendingImageFile(null)
+    setPendingImagePreview(null)
+    setPendingLink('')
 
     let cancelled = false
     supabase
@@ -374,6 +415,57 @@ function App() {
     setUserMenuOpen(false)
   }
 
+  const uploadImage = async (file: File): Promise<string | null> => {
+    const ext = file.name.includes('.') ? file.name.split('.').pop() : 'jpg'
+    const path = `${crypto.randomUUID()}.${ext}`
+    const { error: uploadError } = await supabase.storage.from(STORAGE_BUCKET).upload(path, file)
+    if (uploadError) {
+      setError(uploadError.message)
+      return null
+    }
+    return supabase.storage.from(STORAGE_BUCKET).getPublicUrl(path).data.publicUrl
+  }
+
+  const deleteStoredImage = (url: string | null) => {
+    if (!url) return
+    const path = extractStoragePath(url)
+    if (!path) return
+    supabase.storage.from(STORAGE_BUCKET).remove([path])
+  }
+
+  const handleImagePick = (
+    e: ChangeEvent<HTMLInputElement>,
+    setFile: (f: File | null) => void,
+    setPreview: (u: string | null) => void,
+  ) => {
+    const file = e.target.files?.[0] ?? null
+    e.target.value = ''
+    if (!file) return
+    if (!file.type.startsWith('image/')) {
+      setError('Filen må være et bilde')
+      return
+    }
+    if (file.size > MAX_IMAGE_BYTES) {
+      setError('Bildet er for stort (maks 8 MB)')
+      return
+    }
+    setFile(file)
+    setPreview(URL.createObjectURL(file))
+  }
+
+  const removePendingImage = () => {
+    if (pendingImagePreview) URL.revokeObjectURL(pendingImagePreview)
+    setPendingImageFile(null)
+    setPendingImagePreview(null)
+  }
+
+  const removeEditImage = () => {
+    if (editImageFile && editImagePreview) URL.revokeObjectURL(editImagePreview)
+    setEditImageFile(null)
+    setEditImagePreview(null)
+    setEditImageRemoved(true)
+  }
+
   const addItem = async (e: FormEvent) => {
     e.preventDefault()
     const value = text.trim()
@@ -382,15 +474,21 @@ function App() {
     const hasQuantity = quantity.trim() !== '' && parsedQuantity > 0
     const originalQuantity = quantity
     const finalStore = storeChoice === CUSTOM_STORE ? customStore.trim() || null : storeChoice || null
+    const finalLink = normalizeLink(pendingLink)
+    const imageFile = pendingImageFile
+    const localPreview = pendingImagePreview
 
+    const optimisticId = crypto.randomUUID()
     const optimisticItem: Item = {
-      id: crypto.randomUUID(),
+      id: optimisticId,
       list_id: activeList.id,
       text: value,
       done: false,
       quantity: hasQuantity ? parsedQuantity : null,
       unit: hasQuantity ? unit : null,
       store: finalStore,
+      image_url: localPreview,
+      link_url: finalLink,
       added_by: currentUser,
       created_at: new Date().toISOString(),
     }
@@ -398,10 +496,28 @@ function App() {
     setText('')
     setQuantity('')
     setCustomStore('')
+    setPendingLink('')
+    setPendingImageFile(null)
+    setPendingImagePreview(null)
+    setAttachOpen(false)
 
-    const { error } = await supabase.from('items').insert(optimisticItem)
+    let finalImageUrl = localPreview
+    if (imageFile) {
+      finalImageUrl = await uploadImage(imageFile)
+      if (!finalImageUrl) {
+        setItems((prev) => prev.filter((i) => i.id !== optimisticId))
+        setText(value)
+        setQuantity(originalQuantity)
+        setPendingImageFile(imageFile)
+        setPendingImagePreview(localPreview)
+        return
+      }
+      setItems((prev) => prev.map((i) => (i.id === optimisticId ? { ...i, image_url: finalImageUrl } : i)))
+    }
+
+    const { error } = await supabase.from('items').insert({ ...optimisticItem, image_url: finalImageUrl })
     if (error) {
-      setItems((prev) => prev.filter((i) => i.id !== optimisticItem.id))
+      setItems((prev) => prev.filter((i) => i.id !== optimisticId))
       setError(error.message)
       setText(value)
       setQuantity(originalQuantity)
@@ -424,7 +540,9 @@ function App() {
     if (error) {
       setItems((prev) => sortByCreatedAt([...prev, item]))
       setError(error.message)
+      return
     }
+    deleteStoredImage(item.image_url)
   }
 
   const clearDone = async (doneItems: Item[]) => {
@@ -435,7 +553,9 @@ function App() {
     if (error) {
       setItems((prev) => sortByCreatedAt([...prev, ...doneItems]))
       setError(error.message)
+      return
     }
+    doneItems.forEach((i) => deleteStoredImage(i.image_url))
   }
 
   const askDeleteItem = (item: Item) => {
@@ -518,9 +638,16 @@ function App() {
       setEditStoreChoice('')
       setEditCustomStore('')
     }
+    setEditImageFile(null)
+    setEditImagePreview(item.image_url)
+    setEditImageRemoved(false)
+    setEditLink(item.link_url ?? '')
   }
 
-  const cancelEdit = () => setEditingId(null)
+  const cancelEdit = () => {
+    if (editImageFile && editImagePreview) URL.revokeObjectURL(editImagePreview)
+    setEditingId(null)
+  }
 
   const saveEdit = async (e: FormEvent) => {
     e.preventDefault()
@@ -530,20 +657,43 @@ function App() {
     const parsedQuantity = Number(editQuantity)
     const hasQuantity = editQuantity.trim() !== '' && parsedQuantity > 0
     const finalStore = editStoreChoice === CUSTOM_STORE ? editCustomStore.trim() || null : editStoreChoice || null
+    const finalLink = normalizeLink(editLink)
     const previous = items.find((i) => i.id === editingId)
+    if (!previous) return
+
+    const newFile = editImageFile
+    const optimisticImageUrl = newFile ? editImagePreview : editImageRemoved ? null : previous.image_url
 
     const updated = {
       text: value,
       quantity: hasQuantity ? parsedQuantity : null,
       unit: hasQuantity ? editUnit : null,
       store: finalStore,
+      link_url: finalLink,
     }
 
-    setItems((prev) => prev.map((i) => (i.id === editingId ? { ...i, ...updated } : i)))
+    setItems((prev) => prev.map((i) => (i.id === editingId ? { ...i, ...updated, image_url: optimisticImageUrl } : i)))
     setEditingId(null)
 
-    const { error } = await supabase.from('items').update(updated).eq('id', editingId)
-    if (error && previous) {
+    let finalImageUrl = optimisticImageUrl
+    if (newFile) {
+      const uploaded = await uploadImage(newFile)
+      if (!uploaded) {
+        setItems((prev) => prev.map((i) => (i.id === previous.id ? previous : i)))
+        return
+      }
+      finalImageUrl = uploaded
+      setItems((prev) => prev.map((i) => (i.id === previous.id ? { ...i, image_url: uploaded } : i)))
+      deleteStoredImage(previous.image_url)
+    } else if (editImageRemoved) {
+      deleteStoredImage(previous.image_url)
+    }
+
+    const { error } = await supabase
+      .from('items')
+      .update({ ...updated, image_url: finalImageUrl })
+      .eq('id', editingId)
+    if (error) {
       setItems((prev) => prev.map((i) => (i.id === previous.id ? previous : i)))
       setError(error.message)
     }
@@ -591,6 +741,81 @@ function App() {
 
         {editingId === item.id ? (
           <form className="edit-form" onSubmit={saveEdit}>
+            <div className="edit-form-row edit-attach-row">
+              <input
+                ref={editFileInputRef}
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => handleImagePick(e, setEditImageFile, setEditImagePreview)}
+              />
+              {editImagePreview ? (
+                <div className="attach-image-preview edit-image-preview">
+                  <img
+                    src={editImagePreview}
+                    alt=""
+                    onClick={() => editFileInputRef.current?.click()}
+                  />
+                  <button
+                    type="button"
+                    className="remove-attach"
+                    aria-label="Fjern bilde"
+                    onClick={removeEditImage}
+                  >
+                    ×
+                  </button>
+                </div>
+              ) : (
+                <button type="button" className="attach-option" onClick={() => editFileInputRef.current?.click()}>
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                    <circle cx="9" cy="10.5" r="1.6" fill="currentColor" />
+                    <path
+                      d="M4 16.5 8.5 12.5 11.5 15.2 15 11 20 16"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                    />
+                  </svg>
+                  Legg til bilde
+                </button>
+              )}
+            </div>
+            <div className="edit-form-row link-row">
+              <svg className="link-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M9.5 14.5 14.5 9.5M11 8l1.6-1.6a3 3 0 0 1 4.2 4.2L15.2 12M13 16l-1.6 1.6a3 3 0 0 1-4.2-4.2L8.8 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <input
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                placeholder="Lenke (valgfritt)"
+                value={editLink}
+                onChange={(e) => setEditLink(e.target.value)}
+              />
+              {editLink.trim() && (
+                <a
+                  href={normalizeLink(editLink) ?? '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="link-open"
+                  aria-label={`Åpne lenke til ${linkLabel(normalizeLink(editLink) ?? editLink)}`}
+                  title={linkLabel(normalizeLink(editLink) ?? editLink)}
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  ↗
+                </a>
+              )}
+            </div>
             <div className="edit-form-row">
               <input
                 type="text"
@@ -657,7 +882,20 @@ function App() {
         ) : (
           <>
             <button type="button" className="item-main" onClick={() => startEdit(item)}>
+              {item.image_url && <img className="item-thumb" src={item.image_url} alt="" />}
               <span className="item-text">{item.text}</span>
+              {item.link_url && (
+                <svg className="item-link-icon" viewBox="0 0 24 24" aria-hidden="true">
+                  <path
+                    d="M9.5 14.5 14.5 9.5M11 8l1.6-1.6a3 3 0 0 1 4.2 4.2L15.2 12M13 16l-1.6 1.6a3 3 0 0 1-4.2-4.2L8.8 12"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+              )}
               {item.quantity != null && (
                 <span className="item-qty">
                   {item.quantity} {item.unit}
@@ -918,6 +1156,24 @@ function App() {
             value={text}
             onChange={(e) => setText(e.target.value)}
           />
+          <button
+            type="button"
+            className={`attach-toggle ${attachOpen ? 'active' : ''}`}
+            onClick={() => setAttachOpen((v) => !v)}
+            aria-label="Flere alternativer"
+            aria-expanded={attachOpen}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M7 12.5V7a5 5 0 0 1 10 0v9a3 3 0 0 1-6 0V8a1 1 0 0 1 2 0v7.5"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
           {activeList.type === 'todo' && (
             <button type="submit" aria-label="Legg til" disabled={!text.trim()}>
               +
@@ -972,6 +1228,66 @@ function App() {
                 onChange={(e) => setCustomStore(e.target.value)}
               />
             )}
+          </div>
+        )}
+        {attachOpen && (
+          <div className="attach-panel">
+            <input
+              ref={fileInputRef}
+              type="file"
+              accept="image/*"
+              style={{ display: 'none' }}
+              onChange={(e) => handleImagePick(e, setPendingImageFile, setPendingImagePreview)}
+            />
+            {pendingImagePreview ? (
+              <div className="attach-image-preview">
+                <img src={pendingImagePreview} alt="" />
+                <button
+                  type="button"
+                  className="remove-attach"
+                  aria-label="Fjern bilde"
+                  onClick={removePendingImage}
+                >
+                  ×
+                </button>
+              </div>
+            ) : (
+              <button type="button" className="attach-option" onClick={() => fileInputRef.current?.click()}>
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                  <circle cx="9" cy="10.5" r="1.6" fill="currentColor" />
+                  <path
+                    d="M4 16.5 8.5 12.5 11.5 15.2 15 11 20 16"
+                    fill="none"
+                    stroke="currentColor"
+                    strokeWidth="1.8"
+                    strokeLinecap="round"
+                    strokeLinejoin="round"
+                  />
+                </svg>
+                Legg til bilde fra kamerarull
+              </button>
+            )}
+            <div className="attach-link-row">
+              <svg className="link-icon" viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M9.5 14.5 14.5 9.5M11 8l1.6-1.6a3 3 0 0 1 4.2 4.2L15.2 12M13 16l-1.6 1.6a3 3 0 0 1-4.2-4.2L8.8 12"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="1.8"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+              <input
+                type="url"
+                inputMode="url"
+                autoComplete="off"
+                placeholder="Lim inn lenke (valgfritt)"
+                value={pendingLink}
+                onChange={(e) => setPendingLink(e.target.value)}
+              />
+            </div>
           </div>
         )}
       </form>

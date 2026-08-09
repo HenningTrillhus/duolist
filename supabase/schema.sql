@@ -16,6 +16,8 @@ create table if not exists items (
   quantity numeric,
   unit text,
   store text,
+  image_url text,
+  link_url text,
   added_by text check (added_by in ('Nora', 'Henning')),
   created_at timestamptz not null default now()
 );
@@ -47,3 +49,18 @@ drop trigger if exists items_touch_list on items;
 create trigger items_touch_list
 after insert or update or delete on items
 for each row execute function touch_list_updated_at();
+
+-- Storage bucket for item photos, publicly readable so image URLs work
+-- directly in <img> tags without signed URLs.
+insert into storage.buckets (id, name, public)
+values ('item-files', 'item-files', true)
+on conflict (id) do nothing;
+
+create policy "anon read item-files" on storage.objects
+  for select using (bucket_id = 'item-files');
+
+create policy "anon insert item-files" on storage.objects
+  for insert with check (bucket_id = 'item-files');
+
+create policy "anon delete item-files" on storage.objects
+  for delete using (bucket_id = 'item-files');
