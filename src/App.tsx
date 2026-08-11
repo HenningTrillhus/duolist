@@ -35,9 +35,16 @@ type Dinner = {
   id: string
   date: string
   name: string
+  side: string | null
+  starter: string | null
+  dessert: string | null
   image_url: string | null
   added_by: UserName | null
   created_at: string
+}
+
+function formatDinnerMain(d: Dinner): string {
+  return d.side ? `${d.name} med ${d.side}` : d.name
 }
 
 type UserName = 'Nora' | 'Henning'
@@ -346,6 +353,9 @@ function App() {
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => startOfMonth(new Date()))
   const [dinnerEditorDate, setDinnerEditorDate] = useState<string | null>(null)
   const [dinnerNameInput, setDinnerNameInput] = useState('')
+  const [dinnerSideInput, setDinnerSideInput] = useState('')
+  const [dinnerStarterInput, setDinnerStarterInput] = useState('')
+  const [dinnerDessertInput, setDinnerDessertInput] = useState('')
   const dayStripRef = useRef<HTMLDivElement | null>(null)
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
@@ -963,6 +973,9 @@ function App() {
   const openDinnerEditor = (key: string, existing: Dinner | undefined) => {
     setDinnerEditorDate(key)
     setDinnerNameInput(existing?.name ?? '')
+    setDinnerSideInput(existing?.side ?? '')
+    setDinnerStarterInput(existing?.starter ?? '')
+    setDinnerDessertInput(existing?.dessert ?? '')
   }
 
   const closeDinnerEditor = () => setDinnerEditorDate(null)
@@ -973,13 +986,19 @@ function App() {
     if (!key) return
     const name = dinnerNameInput.trim()
     if (!name) return
+    const side = dinnerSideInput.trim() || null
+    const starter = dinnerStarterInput.trim() || null
+    const dessert = dinnerDessertInput.trim() || null
     const existing = dinners.find((d) => d.date === key)
     closeDinnerEditor()
 
     if (existing) {
       const previous = existing
-      setDinners((prev) => prev.map((d) => (d.id === existing.id ? { ...d, name } : d)))
-      const { error } = await supabase.from('dinners').update({ name }).eq('id', existing.id)
+      setDinners((prev) => prev.map((d) => (d.id === existing.id ? { ...d, name, side, starter, dessert } : d)))
+      const { error } = await supabase
+        .from('dinners')
+        .update({ name, side, starter, dessert })
+        .eq('id', existing.id)
       if (error) {
         setDinners((prev) => prev.map((d) => (d.id === previous.id ? previous : d)))
         setError(error.message)
@@ -992,6 +1011,9 @@ function App() {
       id: optimisticId,
       date: key,
       name,
+      side,
+      starter,
+      dessert,
       image_url: null,
       added_by: currentUser,
       created_at: new Date().toISOString(),
@@ -999,7 +1021,7 @@ function App() {
     setDinners((prev) => [...prev, optimistic])
     const { error } = await supabase
       .from('dinners')
-      .insert({ id: optimisticId, date: key, name, added_by: currentUser })
+      .insert({ id: optimisticId, date: key, name, side, starter, dessert, added_by: currentUser })
     if (error) {
       setDinners((prev) => prev.filter((d) => d.id !== optimisticId))
       setError(error.message)
@@ -1714,7 +1736,11 @@ function App() {
                             </span>
                           )}
                         </div>
-                        <span className="day-dinner-name">{dinner.name}</span>
+                        <div className="day-dinner-name">
+                          <span className="day-dinner-main">{formatDinnerMain(dinner)}</span>
+                          {dinner.starter && <span className="day-dinner-extra">Forrett: {dinner.starter}</span>}
+                          {dinner.dessert && <span className="day-dinner-extra">Dessert: {dinner.dessert}</span>}
+                        </div>
                       </button>
                     ) : (
                       <button
@@ -1890,13 +1916,50 @@ function App() {
           <div className="modal-card dinner-editor" onClick={(e) => e.stopPropagation()}>
             <h2>{formatDinnerEditorTitle(dinnerEditorDate)}</h2>
             <form onSubmit={saveDinner}>
+              <label className="dinner-field-label" htmlFor="dinner-name-input">
+                Middag
+              </label>
               <input
+                id="dinner-name-input"
                 type="text"
                 autoComplete="off"
                 placeholder="Hva skal dere spise?"
                 value={dinnerNameInput}
                 onChange={(e) => setDinnerNameInput(e.target.value)}
                 autoFocus
+              />
+              <label className="dinner-field-label" htmlFor="dinner-side-input">
+                Tilbehør (valgfritt)
+              </label>
+              <input
+                id="dinner-side-input"
+                type="text"
+                autoComplete="off"
+                placeholder="F.eks. pommes frites"
+                value={dinnerSideInput}
+                onChange={(e) => setDinnerSideInput(e.target.value)}
+              />
+              <label className="dinner-field-label" htmlFor="dinner-starter-input">
+                Forrett (valgfritt)
+              </label>
+              <input
+                id="dinner-starter-input"
+                type="text"
+                autoComplete="off"
+                placeholder="F.eks. salat"
+                value={dinnerStarterInput}
+                onChange={(e) => setDinnerStarterInput(e.target.value)}
+              />
+              <label className="dinner-field-label" htmlFor="dinner-dessert-input">
+                Dessert (valgfritt)
+              </label>
+              <input
+                id="dinner-dessert-input"
+                type="text"
+                autoComplete="off"
+                placeholder="F.eks. is"
+                value={dinnerDessertInput}
+                onChange={(e) => setDinnerDessertInput(e.target.value)}
               />
               <div className="dinner-editor-actions">
                 {dinners.some((d) => d.date === dinnerEditorDate) && (

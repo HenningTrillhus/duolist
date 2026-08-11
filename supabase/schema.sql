@@ -73,6 +73,9 @@ create table if not exists dinners (
   id uuid primary key default gen_random_uuid(),
   date date not null unique,
   name text not null,
+  side text,
+  starter text,
+  dessert text,
   image_url text,
   added_by text check (added_by in ('Nora', 'Henning')),
   created_at timestamptz not null default now()
