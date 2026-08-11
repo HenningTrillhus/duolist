@@ -160,6 +160,32 @@
   white-space: nowrap;
 }
 
+.header-actions {
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.history-button {
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: var(--card);
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.history-button svg {
+  width: 19px;
+  height: 19px;
+}
+
 .user-button {
   flex-shrink: 0;
   border: none;
@@ -1036,4 +1062,121 @@ li.done .item-text {
 .tab-bar button.active {
   color: var(--accent);
   background: var(--accent-bg);
+}
+
+.history-sheet {
+  background: var(--bg);
+  border-radius: 22px;
+  width: 100%;
+  max-width: 440px;
+  max-height: 78vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  box-shadow: var(--shadow-md);
+  animation: modalIn 0.18s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+
+.history-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 18px 18px 12px 22px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+
+.history-header h2 {
+  margin: 0;
+  font-size: 19px;
+  color: var(--text-h);
+}
+
+.history-close {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: var(--card);
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+.history-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 14px 22px 22px;
+  -webkit-overflow-scrolling: touch;
+}
+
+.history-body .loading {
+  padding: 40px 0;
+}
+
+.history-body .empty {
+  padding: 40px 10px;
+}
+
+.history-group {
+  margin-bottom: 20px;
+}
+
+.history-group:last-child {
+  margin-bottom: 0;
+}
+
+.history-day-label {
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--text);
+  opacity: 0.65;
+  text-transform: uppercase;
+  letter-spacing: 0.4px;
+  margin: 0 0 8px 2px;
+}
+
+.history-row {
+  padding: 10px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.history-row:last-child {
+  border-bottom: none;
+}
+
+.history-row-main {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.history-text {
+  flex: 1;
+  font-size: 16px;
+  color: var(--text-h);
+  word-break: break-word;
+}
+
+.history-list-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--accent-bg);
+  border-radius: 8px;
+  padding: 2px 8px;
+  white-space: nowrap;
+}
+
+.history-times {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px 14px;
+  font-size: 12.5px;
+  color: var(--text);
+  opacity: 0.7;
 }

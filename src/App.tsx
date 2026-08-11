@@ -14,8 +14,12 @@ type Item = {
   image_url: string | null
   link_url: string | null
   added_by: UserName | null
+  completed_at: string | null
+  archived: boolean
   created_at: string
 }
+
+type HistoryEntry = Item & { lists: { name: string } | null }
 
 type ListType = 'grocery' | 'todo' | 'shopping'
 
@@ -177,6 +181,49 @@ function extractStoragePath(url: string): string | null {
   return url.slice(idx + marker.length)
 }
 
+function formatDateTime(dateStr: string | null): string {
+  if (!dateStr) return '—'
+  const date = new Date(dateStr)
+  if (Number.isNaN(date.getTime())) return '—'
+  const time = date.toLocaleTimeString('no-NO', { hour: '2-digit', minute: '2-digit' })
+  const now = new Date()
+  if (date.toDateString() === now.toDateString()) return `i dag kl. ${time}`
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  if (date.toDateString() === yesterday.toDateString()) return `i går kl. ${time}`
+  return `${date.toLocaleDateString('no-NO', { day: '2-digit', month: 'short' })} kl. ${time}`
+}
+
+type HistoryGroup = { label: string; entries: HistoryEntry[] }
+
+function groupHistoryByDay(entries: HistoryEntry[]): HistoryGroup[] {
+  const map = new Map<string, HistoryEntry[]>()
+  for (const entry of entries) {
+    const d = entry.completed_at ? new Date(entry.completed_at) : null
+    const key = d && !Number.isNaN(d.getTime()) ? d.toDateString() : 'ukjent'
+    if (!map.has(key)) map.set(key, [])
+    map.get(key)!.push(entry)
+  }
+  const now = new Date()
+  const yesterday = new Date(now)
+  yesterday.setDate(now.getDate() - 1)
+  return [...map.entries()].map(([key, groupEntries]) => {
+    let label: string
+    if (key === 'ukjent') {
+      label = 'Ukjent dato'
+    } else if (key === now.toDateString()) {
+      label = 'I dag'
+    } else if (key === yesterday.toDateString()) {
+      label = 'I går'
+    } else {
+      const d = new Date(key)
+      label = d.toLocaleDateString('no-NO', { weekday: 'long', day: 'numeric', month: 'long' })
+      label = label.charAt(0).toUpperCase() + label.slice(1)
+    }
+    return { label, entries: groupEntries }
+  })
+}
+
 type StoreGroup = { store: string | null; color: string; items: Item[] }
 
 function groupByStore(items: Item[], stores: StoreOption[]): StoreGroup[] {
@@ -226,6 +273,11 @@ function App() {
     message: string
     onConfirm: () => void
   } | null>(null)
+
+  const [historyOpen, setHistoryOpen] = useState(false)
+  const [historyEntries, setHistoryEntries] = useState<HistoryEntry[] | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   const [scrolled, setScrolled] = useState(false)
@@ -342,6 +394,7 @@ function App() {
       .from('items')
       .select('*')
       .eq('list_id', activeId)
+      .eq('archived', false)
       .order('created_at', { ascending: true })
       .then(({ data, error }) => {
         if (cancelled) return
@@ -360,10 +413,19 @@ function App() {
         (payload) => {
           if (payload.eventType === 'INSERT') {
             const row = payload.new as Item
+            if (row.archived) return
             setItems((prev) => (prev.some((i) => i.id === row.id) ? prev : sortByCreatedAt([...prev, row])))
           } else if (payload.eventType === 'UPDATE') {
             const row = payload.new as Item
-            setItems((prev) => prev.map((i) => (i.id === row.id ? row : i)))
+            if (row.archived) {
+              setItems((prev) => prev.filter((i) => i.id !== row.id))
+            } else {
+              setItems((prev) =>
+                prev.some((i) => i.id === row.id)
+                  ? prev.map((i) => (i.id === row.id ? row : i))
+                  : sortByCreatedAt([...prev, row]),
+              )
+            }
           } else if (payload.eventType === 'DELETE') {
             const row = payload.old as Item
             setItems((prev) => prev.filter((i) => i.id !== row.id))
@@ -501,6 +563,8 @@ function App() {
       image_url: localPreview,
       link_url: finalLink,
       added_by: currentUser,
+      completed_at: null,
+      archived: false,
       created_at: new Date().toISOString(),
     }
     setItems((prev) => sortByCreatedAt([...prev, optimisticItem]))
@@ -537,16 +601,29 @@ function App() {
 
   const toggleItem = async (item: Item) => {
     const nextDone = !item.done
-    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, done: nextDone } : i)))
-    const { error } = await supabase.from('items').update({ done: nextDone }).eq('id', item.id)
+    const patch = { done: nextDone, completed_at: nextDone ? new Date().toISOString() : null }
+    setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)))
+    const { error } = await supabase.from('items').update(patch).eq('id', item.id)
     if (error) {
-      setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, done: item.done } : i)))
+      setItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, done: item.done, completed_at: item.completed_at } : i)),
+      )
       setError(error.message)
     }
   }
 
+  // Items that were ever completed are archived rather than deleted, so they
+  // still show up in Historikk after being removed from the active list.
   const deleteItem = async (item: Item) => {
     setItems((prev) => prev.filter((i) => i.id !== item.id))
+    if (item.done) {
+      const { error } = await supabase.from('items').update({ archived: true }).eq('id', item.id)
+      if (error) {
+        setItems((prev) => sortByCreatedAt([...prev, item]))
+        setError(error.message)
+      }
+      return
+    }
     const { error } = await supabase.from('items').delete().eq('id', item.id)
     if (error) {
       setItems((prev) => sortByCreatedAt([...prev, item]))
@@ -560,13 +637,11 @@ function App() {
     if (doneItems.length === 0) return
     const doneIds = doneItems.map((i) => i.id)
     setItems((prev) => prev.filter((i) => !doneIds.includes(i.id)))
-    const { error } = await supabase.from('items').delete().in('id', doneIds)
+    const { error } = await supabase.from('items').update({ archived: true }).in('id', doneIds)
     if (error) {
       setItems((prev) => sortByCreatedAt([...prev, ...doneItems]))
       setError(error.message)
-      return
     }
-    doneItems.forEach((i) => deleteStoredImage(i.image_url))
   }
 
   const askDeleteItem = (item: Item) => {
@@ -712,6 +787,24 @@ function App() {
 
   const onListScroll = (e: UIEvent<HTMLElement>) => {
     setScrolled(e.currentTarget.scrollTop > 4)
+  }
+
+  const openHistory = async () => {
+    setHistoryOpen(true)
+    setHistoryLoading(true)
+    setHistoryError(null)
+    const { data, error } = await supabase
+      .from('items')
+      .select('*, lists(name)')
+      .eq('done', true)
+      .order('completed_at', { ascending: false })
+      .limit(200)
+    setHistoryLoading(false)
+    if (error) {
+      setHistoryError(error.message)
+      return
+    }
+    setHistoryEntries(data as unknown as HistoryEntry[])
   }
 
   const remaining = items.filter((item) => !item.done).length
@@ -975,18 +1068,36 @@ function App() {
     </div>
   )
 
-  const userButtonEl = (
-    <button
-      type="button"
-      className="user-button"
-      onClick={() => setUserMenuOpen((v) => !v)}
-      aria-label="Bytt bruker"
-      aria-expanded={userMenuOpen}
-    >
-      <span className="user-avatar" style={{ background: currentUser ? USER_COLORS[currentUser].accent : undefined }}>
-        {currentUser ? currentUser[0] : '?'}
-      </span>
-    </button>
+  const headerActionsEl = (
+    <div className="header-actions">
+      <button type="button" className="history-button" onClick={openHistory} aria-label="Historikk">
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <path
+            d="M12 7.5V12l3 2"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="1.8"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      </button>
+      <button
+        type="button"
+        className="user-button"
+        onClick={() => setUserMenuOpen((v) => !v)}
+        aria-label="Bytt bruker"
+        aria-expanded={userMenuOpen}
+      >
+        <span
+          className="user-avatar"
+          style={{ background: currentUser ? USER_COLORS[currentUser].accent : undefined }}
+        >
+          {currentUser ? currentUser[0] : '?'}
+        </span>
+      </button>
+    </div>
   )
 
   const userPanelEl = userMenuOpen && (
@@ -1052,7 +1163,7 @@ function App() {
           <header className={`header ${scrolled ? 'scrolled' : ''}`}>
             <div className="header-top">
               <span className="list-name">Duolist</span>
-              {userButtonEl}
+              {headerActionsEl}
             </div>
           </header>
           <main className="list">
@@ -1086,7 +1197,7 @@ function App() {
             </svg>
           </button>
 
-          {userButtonEl}
+          {headerActionsEl}
         </div>
 
         <p className="subtitle">
@@ -1323,7 +1434,7 @@ function App() {
           <header className={`header ${scrolled ? 'scrolled' : ''}`}>
             <div className="header-top">
               <span className="list-name">Middagsplanlegger</span>
-              {userButtonEl}
+              {headerActionsEl}
             </div>
             <p className="subtitle">Kommer snart</p>
             {userPanelEl}
@@ -1396,6 +1507,53 @@ function App() {
               <button type="button" className="danger" onClick={confirmDialog.onConfirm}>
                 Slett
               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {historyOpen && (
+        <div className="modal-backdrop" onClick={() => setHistoryOpen(false)}>
+          <div className="history-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="history-header">
+              <h2>Historikk</h2>
+              <button
+                type="button"
+                className="history-close"
+                onClick={() => setHistoryOpen(false)}
+                aria-label="Lukk"
+              >
+                ×
+              </button>
+            </div>
+            <div className="history-body">
+              {historyLoading ? (
+                <div className="loading">
+                  <div className="spinner" aria-label="Laster" />
+                </div>
+              ) : historyError ? (
+                <p className="loading-error">Feil: {historyError}</p>
+              ) : !historyEntries || historyEntries.length === 0 ? (
+                <div className="empty">Ingen fullførte varer ennå</div>
+              ) : (
+                groupHistoryByDay(historyEntries).map((group) => (
+                  <div className="history-group" key={group.label}>
+                    <div className="history-day-label">{group.label}</div>
+                    {group.entries.map((entry) => (
+                      <div className="history-row" key={entry.id}>
+                        <div className="history-row-main">
+                          <span className="history-text">{entry.text}</span>
+                          {entry.lists?.name && <span className="history-list-badge">{entry.lists.name}</span>}
+                        </div>
+                        <div className="history-times">
+                          <span>Lagt til {formatDateTime(entry.created_at)}</span>
+                          <span>Fullført {formatDateTime(entry.completed_at)}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
             </div>
           </div>
         </div>

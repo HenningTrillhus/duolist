@@ -19,6 +19,8 @@ create table if not exists items (
   image_url text,
   link_url text,
   added_by text check (added_by in ('Nora', 'Henning')),
+  completed_at timestamptz,
+  archived boolean not null default false,
   created_at timestamptz not null default now()
 );
 
