@@ -66,3 +66,18 @@ create policy "anon insert item-files" on storage.objects
 
 create policy "anon delete item-files" on storage.objects
   for delete using (bucket_id = 'item-files');
+
+-- One planned dinner per calendar day. image_url is unused for now but
+-- kept ready for when dinners get photos too.
+create table if not exists dinners (
+  id uuid primary key default gen_random_uuid(),
+  date date not null unique,
+  name text not null,
+  image_url text,
+  added_by text check (added_by in ('Nora', 'Henning')),
+  created_at timestamptz not null default now()
+);
+
+alter table dinners enable row level security;
+create policy "anon full access" on dinners for all using (true) with check (true);
+alter publication supabase_realtime add table dinners;

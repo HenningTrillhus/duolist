@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, ReactNode, UIEvent } from 'react'
 import { supabase } from './lib/supabase'
 import './App.css'
@@ -29,6 +29,15 @@ type ShoppingList = {
   type: ListType
   created_at: string
   updated_at: string | null
+}
+
+type Dinner = {
+  id: string
+  date: string
+  name: string
+  image_url: string | null
+  added_by: UserName | null
+  created_at: string
 }
 
 type UserName = 'Nora' | 'Henning'
@@ -224,6 +233,59 @@ function groupHistoryByDay(entries: HistoryEntry[]): HistoryGroup[] {
   })
 }
 
+function startOfDay(d: Date): Date {
+  const copy = new Date(d)
+  copy.setHours(0, 0, 0, 0)
+  return copy
+}
+
+function startOfMonth(d: Date): Date {
+  return new Date(d.getFullYear(), d.getMonth(), 1)
+}
+
+function addDays(d: Date, n: number): Date {
+  const copy = new Date(d)
+  copy.setDate(copy.getDate() + n)
+  return copy
+}
+
+function dateKey(d: Date): string {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function formatDayLabel(d: Date): string {
+  const diffDays = Math.round((startOfDay(d).getTime() - startOfDay(new Date()).getTime()) / 86400000)
+  if (diffDays === 0) return 'I dag'
+  if (diffDays === 1) return 'I morgen'
+  if (diffDays === -1) return 'I går'
+  const weekday = d.toLocaleDateString('no-NO', { weekday: 'short' })
+  return `${weekday.charAt(0).toUpperCase()}${weekday.slice(1)} ${d.getDate()}.${d.getMonth() + 1}`
+}
+
+function formatDinnerEditorTitle(key: string): string {
+  const d = new Date(`${key}T00:00:00`)
+  const label = d.toLocaleDateString('no-NO', { weekday: 'long', day: 'numeric', month: 'long' })
+  return `Middag – ${label}`
+}
+
+const DAY_STRIP_BEFORE = 60
+const DAY_STRIP_AFTER = 180
+
+function daysInMonthGrid(monthStart: Date): (Date | null)[] {
+  const year = monthStart.getFullYear()
+  const month = monthStart.getMonth()
+  const firstDay = new Date(year, month, 1)
+  const lastDay = new Date(year, month + 1, 0)
+  const startOffset = (firstDay.getDay() + 6) % 7
+  const cells: (Date | null)[] = []
+  for (let i = 0; i < startOffset; i++) cells.push(null)
+  for (let day = 1; day <= lastDay.getDate(); day++) cells.push(new Date(year, month, day))
+  return cells
+}
+
 type StoreGroup = { store: string | null; color: string; items: Item[] }
 
 function groupByStore(items: Item[], stores: StoreOption[]): StoreGroup[] {
@@ -278,6 +340,13 @@ function App() {
   const [historyEntries, setHistoryEntries] = useState<HistoryEntry[] | null>(null)
   const [historyLoading, setHistoryLoading] = useState(false)
   const [historyError, setHistoryError] = useState<string | null>(null)
+
+  const [dinners, setDinners] = useState<Dinner[]>([])
+  const [calendarOpen, setCalendarOpen] = useState(false)
+  const [calendarMonth, setCalendarMonth] = useState<Date>(() => startOfMonth(new Date()))
+  const [dinnerEditorDate, setDinnerEditorDate] = useState<string | null>(null)
+  const [dinnerNameInput, setDinnerNameInput] = useState('')
+  const dayStripRef = useRef<HTMLDivElement | null>(null)
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   const [scrolled, setScrolled] = useState(false)
@@ -348,6 +417,47 @@ function App() {
     run()
     return () => {
       cancelled = true
+    }
+  }, [])
+
+  // Load dinners once and keep them in sync in real time.
+  useEffect(() => {
+    let cancelled = false
+    supabase
+      .from('dinners')
+      .select('*')
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) {
+          setError(error.message)
+          return
+        }
+        setDinners(data)
+      })
+
+    const channel = supabase
+      .channel('dinners-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'dinners' },
+        (payload) => {
+          if (payload.eventType === 'INSERT') {
+            const row = payload.new as Dinner
+            setDinners((prev) => (prev.some((d) => d.id === row.id) ? prev : [...prev, row]))
+          } else if (payload.eventType === 'UPDATE') {
+            const row = payload.new as Dinner
+            setDinners((prev) => prev.map((d) => (d.id === row.id ? row : d)))
+          } else if (payload.eventType === 'DELETE') {
+            const row = payload.old as Dinner
+            setDinners((prev) => prev.filter((d) => d.id !== row.id))
+          }
+        },
+      )
+      .subscribe()
+
+    return () => {
+      cancelled = true
+      supabase.removeChannel(channel)
     }
   }, [])
 
@@ -807,6 +917,119 @@ function App() {
     setHistoryEntries(data as unknown as HistoryEntry[])
   }
 
+  const dayList = useMemo(() => {
+    const today = startOfDay(new Date())
+    const days: Date[] = []
+    for (let i = -DAY_STRIP_BEFORE; i <= DAY_STRIP_AFTER; i++) days.push(addDays(today, i))
+    return days
+  }, [])
+
+  const dinnersByDate = useMemo(() => {
+    const map = new Map<string, Dinner>()
+    for (const d of dinners) map.set(d.date, d)
+    return map
+  }, [dinners])
+
+  const scrollToDate = (key: string, behavior: ScrollBehavior) => {
+    const container = dayStripRef.current
+    if (!container) return
+    const el = container.querySelector<HTMLElement>(`[data-date="${key}"]`)
+    if (!el) return
+    container.scrollTo({ left: el.offsetLeft - container.offsetLeft, behavior })
+  }
+
+  // useCallback keeps this ref's identity stable across re-renders — an inline
+  // arrow function here would get a new identity every render, making React
+  // detach/reattach it (and re-run the "jump to today" reset) on every
+  // unrelated state change, not just on the day-strip's actual mount.
+  const setDayStripRef = useCallback((el: HTMLDivElement | null) => {
+    dayStripRef.current = el
+    if (el) {
+      requestAnimationFrame(() => scrollToDate(dateKey(new Date()), 'auto'))
+    }
+  }, [])
+
+  const shiftCalendarMonth = (delta: number) => {
+    setCalendarMonth((prev) => new Date(prev.getFullYear(), prev.getMonth() + delta, 1))
+  }
+
+  const pickCalendarDate = (d: Date) => {
+    setCalendarOpen(false)
+    // 'auto' (instant), not 'smooth': animated scrollTo fights with this
+    // strip's CSS scroll-snap and reliably lands on the wrong card.
+    scrollToDate(dateKey(d), 'auto')
+  }
+
+  const openDinnerEditor = (key: string, existing: Dinner | undefined) => {
+    setDinnerEditorDate(key)
+    setDinnerNameInput(existing?.name ?? '')
+  }
+
+  const closeDinnerEditor = () => setDinnerEditorDate(null)
+
+  const saveDinner = async (e: FormEvent) => {
+    e.preventDefault()
+    const key = dinnerEditorDate
+    if (!key) return
+    const name = dinnerNameInput.trim()
+    if (!name) return
+    const existing = dinners.find((d) => d.date === key)
+    closeDinnerEditor()
+
+    if (existing) {
+      const previous = existing
+      setDinners((prev) => prev.map((d) => (d.id === existing.id ? { ...d, name } : d)))
+      const { error } = await supabase.from('dinners').update({ name }).eq('id', existing.id)
+      if (error) {
+        setDinners((prev) => prev.map((d) => (d.id === previous.id ? previous : d)))
+        setError(error.message)
+      }
+      return
+    }
+
+    const optimisticId = crypto.randomUUID()
+    const optimistic: Dinner = {
+      id: optimisticId,
+      date: key,
+      name,
+      image_url: null,
+      added_by: currentUser,
+      created_at: new Date().toISOString(),
+    }
+    setDinners((prev) => [...prev, optimistic])
+    const { error } = await supabase
+      .from('dinners')
+      .insert({ id: optimisticId, date: key, name, added_by: currentUser })
+    if (error) {
+      setDinners((prev) => prev.filter((d) => d.id !== optimisticId))
+      setError(error.message)
+    }
+  }
+
+  const askDeleteDinner = () => {
+    const key = dinnerEditorDate
+    const existing = dinners.find((d) => d.date === key)
+    if (!existing) return
+    closeDinnerEditor()
+    setConfirmDialog({
+      message: `Fjerne middag «${existing.name}»?`,
+      onConfirm: () => {
+        setConfirmDialog(null)
+        setDinners((prev) => prev.filter((d) => d.id !== existing.id))
+        supabase
+          .from('dinners')
+          .delete()
+          .eq('id', existing.id)
+          .then(({ error }) => {
+            if (error) {
+              setDinners((prev) => [...prev, existing])
+              setError(error.message)
+            }
+          })
+      },
+    })
+  }
+
   const remaining = items.filter((item) => !item.done).length
   const hasDone = items.some((item) => item.done)
 
@@ -1068,6 +1291,23 @@ function App() {
     </div>
   )
 
+  const userButtonEl = (
+    <button
+      type="button"
+      className="user-button"
+      onClick={() => setUserMenuOpen((v) => !v)}
+      aria-label="Bytt bruker"
+      aria-expanded={userMenuOpen}
+    >
+      <span
+        className="user-avatar"
+        style={{ background: currentUser ? USER_COLORS[currentUser].accent : undefined }}
+      >
+        {currentUser ? currentUser[0] : '?'}
+      </span>
+    </button>
+  )
+
   const headerActionsEl = (
     <div className="header-actions">
       <button type="button" className="history-button" onClick={openHistory} aria-label="Historikk">
@@ -1083,20 +1323,32 @@ function App() {
           />
         </svg>
       </button>
+      {userButtonEl}
+    </div>
+  )
+
+  const middagHeaderActionsEl = (
+    <div className="header-actions">
       <button
         type="button"
-        className="user-button"
-        onClick={() => setUserMenuOpen((v) => !v)}
-        aria-label="Bytt bruker"
-        aria-expanded={userMenuOpen}
+        className="today-button"
+        onClick={() => scrollToDate(dateKey(new Date()), 'auto')}
       >
-        <span
-          className="user-avatar"
-          style={{ background: currentUser ? USER_COLORS[currentUser].accent : undefined }}
-        >
-          {currentUser ? currentUser[0] : '?'}
-        </span>
+        I dag
       </button>
+      <button
+        type="button"
+        className="calendar-button"
+        onClick={() => setCalendarOpen(true)}
+        aria-label="Velg dato"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3.5" y="5" width="17" height="16" rx="3" fill="none" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M3.5 9.5h17" stroke="currentColor" strokeWidth="1.8" />
+          <path d="M8 3v4M16 3v4" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+        </svg>
+      </button>
+      {userButtonEl}
     </div>
   )
 
@@ -1434,18 +1686,51 @@ function App() {
           <header className={`header ${scrolled ? 'scrolled' : ''}`}>
             <div className="header-top">
               <span className="list-name">Middagsplanlegger</span>
-              {headerActionsEl}
+              {middagHeaderActionsEl}
             </div>
-            <p className="subtitle">Kommer snart</p>
             {userPanelEl}
           </header>
-          <main className="list placeholder-view">
-            <div className="empty">
-              <span className="placeholder-icon" aria-hidden="true">
-                🍽️
-              </span>
-              <h2>Middagsplanlegger</h2>
-              <p>Planlegg middager for uken sammen — kommer snart.</p>
+          <main className="list dinner-main">
+            <div className="day-strip" ref={setDayStripRef}>
+              {dayList.map((d) => {
+                const key = dateKey(d)
+                const dinner = dinnersByDate.get(key)
+                const isToday = key === dateKey(new Date())
+                return (
+                  <div className="day-card" key={key} data-date={key}>
+                    <div className={`day-card-label ${isToday ? 'is-today' : ''}`}>{formatDayLabel(d)}</div>
+                    {dinner ? (
+                      <button
+                        type="button"
+                        className="day-dinner filled"
+                        onClick={() => openDinnerEditor(key, dinner)}
+                      >
+                        <div className="day-dinner-image-slot">
+                          {dinner.image_url ? (
+                            <img src={dinner.image_url} alt="" />
+                          ) : (
+                            <span className="day-dinner-icon" aria-hidden="true">
+                              🍽️
+                            </span>
+                          )}
+                        </div>
+                        <span className="day-dinner-name">{dinner.name}</span>
+                      </button>
+                    ) : (
+                      <button
+                        type="button"
+                        className="day-dinner empty"
+                        onClick={() => openDinnerEditor(key, undefined)}
+                      >
+                        <span className="day-dinner-plus" aria-hidden="true">
+                          +
+                        </span>
+                        <span className="day-dinner-label">Velg middag</span>
+                      </button>
+                    )}
+                  </div>
+                )
+              })}
             </div>
           </main>
         </div>
@@ -1555,6 +1840,78 @@ function App() {
                 ))
               )}
             </div>
+          </div>
+        </div>
+      )}
+
+      {calendarOpen && (
+        <div className="modal-backdrop" onClick={() => setCalendarOpen(false)}>
+          <div className="modal-card calendar-card" onClick={(e) => e.stopPropagation()}>
+            <div className="calendar-header">
+              <button type="button" onClick={() => shiftCalendarMonth(-1)} aria-label="Forrige måned">
+                ‹
+              </button>
+              <span className="calendar-month-label">
+                {calendarMonth.toLocaleDateString('no-NO', { month: 'long', year: 'numeric' })}
+              </span>
+              <button type="button" onClick={() => shiftCalendarMonth(1)} aria-label="Neste måned">
+                ›
+              </button>
+            </div>
+            <div className="calendar-weekdays">
+              {['Ma', 'Ti', 'On', 'To', 'Fr', 'Lø', 'Sø'].map((d) => (
+                <span key={d}>{d}</span>
+              ))}
+            </div>
+            <div className="calendar-grid">
+              {daysInMonthGrid(calendarMonth).map((d, i) =>
+                d ? (
+                  <button
+                    type="button"
+                    key={dateKey(d)}
+                    className={`calendar-day ${dateKey(d) === dateKey(new Date()) ? 'today' : ''} ${
+                      dinnersByDate.has(dateKey(d)) ? 'has-dinner' : ''
+                    }`}
+                    onClick={() => pickCalendarDate(d)}
+                  >
+                    {d.getDate()}
+                  </button>
+                ) : (
+                  <span key={`empty-${i}`} className="calendar-day empty" />
+                ),
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {dinnerEditorDate && (
+        <div className="modal-backdrop" onClick={closeDinnerEditor}>
+          <div className="modal-card dinner-editor" onClick={(e) => e.stopPropagation()}>
+            <h2>{formatDinnerEditorTitle(dinnerEditorDate)}</h2>
+            <form onSubmit={saveDinner}>
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder="Hva skal dere spise?"
+                value={dinnerNameInput}
+                onChange={(e) => setDinnerNameInput(e.target.value)}
+                autoFocus
+              />
+              <div className="dinner-editor-actions">
+                {dinners.some((d) => d.date === dinnerEditorDate) && (
+                  <button type="button" className="danger-text" onClick={askDeleteDinner}>
+                    Fjern
+                  </button>
+                )}
+                <button type="button" className="cancel" onClick={closeDinnerEditor}>
+                  Avbryt
+                </button>
+                <button type="submit" className="confirm" disabled={!dinnerNameInput.trim()}>
+                  Lagre
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}
