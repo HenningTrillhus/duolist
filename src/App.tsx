@@ -39,9 +39,11 @@ const CUSTOM_STORE = '__custom__'
 const ACTIVE_KEY = 'duolist-active-list'
 const USER_KEY = 'duolist-user'
 const THEME_KEY = 'duolist-theme'
+const TAB_KEY = 'duolist-tab'
 const REMOVE_ANIM_MS = 180
 
 type Theme = 'light' | 'dark'
+type AppTab = 'liste' | 'middag'
 
 const USERS: UserName[] = ['Nora', 'Henning']
 
@@ -215,6 +217,11 @@ function App() {
 
   const [theme, setTheme] = useState<Theme>(loadTheme)
 
+  const [activeTab, setActiveTab] = useState<AppTab>(() => {
+    const stored = localStorage.getItem(TAB_KEY)
+    return stored === 'middag' ? 'middag' : 'liste'
+  })
+
   const [confirmDialog, setConfirmDialog] = useState<{
     message: string
     onConfirm: () => void
@@ -387,6 +394,10 @@ function App() {
     document.documentElement.setAttribute('data-theme', theme)
     localStorage.setItem(THEME_KEY, theme)
   }, [theme])
+
+  useEffect(() => {
+    localStorage.setItem(TAB_KEY, activeTab)
+  }, [activeTab])
 
   useEffect(() => {
     if (!userMenuOpen) return
@@ -964,19 +975,96 @@ function App() {
     </div>
   )
 
-  if (loading || !activeList) {
-    return (
-      <div className="app">
-        <div className="loading">
-          {error ? <p className="loading-error">Feil: {error}</p> : <div className="spinner" aria-label="Laster" />}
-        </div>
-        {userPicker}
+  const userButtonEl = (
+    <button
+      type="button"
+      className="user-button"
+      onClick={() => setUserMenuOpen((v) => !v)}
+      aria-label="Bytt bruker"
+      aria-expanded={userMenuOpen}
+    >
+      <span className="user-avatar" style={{ background: currentUser ? USER_COLORS[currentUser].accent : undefined }}>
+        {currentUser ? currentUser[0] : '?'}
+      </span>
+    </button>
+  )
+
+  const userPanelEl = userMenuOpen && (
+    <div className="user-panel" ref={userPanelRef}>
+      {USERS.map((name) => (
+        <button
+          key={name}
+          type="button"
+          className={currentUser === name ? 'active' : ''}
+          onClick={() => chooseUser(name)}
+        >
+          <span className="user-dot" style={{ background: USER_COLORS[name].accent }} />
+          {name}
+        </button>
+      ))}
+
+      <div className="theme-toggle">
+        <button
+          type="button"
+          className={theme === 'light' ? 'active' : ''}
+          onClick={() => setTheme('light')}
+          aria-label="Lys modus"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path
+              d="M12 2.5v2.5M12 19v2.5M21.5 12H19M5 12H2.5M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8M18.4 18.4l-1.8-1.8M7.4 7.4 5.6 5.6"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+            />
+          </svg>
+          Lys
+        </button>
+        <button
+          type="button"
+          className={theme === 'dark' ? 'active' : ''}
+          onClick={() => setTheme('dark')}
+          aria-label="Mørk modus"
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinejoin="round"
+            />
+          </svg>
+          Mørk
+        </button>
       </div>
-    )
-  }
+    </div>
+  )
+
+  const listeLoadingGate = loading || !activeList
+  const showToast = error && !(activeTab === 'liste' && listeLoadingGate)
 
   return (
     <div className="app">
+      {activeTab === 'liste' && listeLoadingGate && (
+        <div className="tab-view" key="liste-loading">
+          <header className={`header ${scrolled ? 'scrolled' : ''}`}>
+            <div className="header-top">
+              <span className="list-name">Duolist</span>
+              {userButtonEl}
+            </div>
+          </header>
+          <main className="list">
+            <div className="loading">
+              {error ? <p className="loading-error">Feil: {error}</p> : <div className="spinner" aria-label="Laster" />}
+            </div>
+          </main>
+        </div>
+      )}
+
+      {activeTab === 'liste' && !listeLoadingGate && activeList && (
+        <div className="tab-view" key="liste">
       <header className={`header ${scrolled ? 'scrolled' : ''}`}>
         <div className="header-top">
           <button
@@ -998,20 +1086,7 @@ function App() {
             </svg>
           </button>
 
-          <button
-            type="button"
-            className="user-button"
-            onClick={() => setUserMenuOpen((v) => !v)}
-            aria-label="Bytt bruker"
-            aria-expanded={userMenuOpen}
-          >
-            <span
-              className="user-avatar"
-              style={{ background: currentUser ? USER_COLORS[currentUser].accent : undefined }}
-            >
-              {currentUser ? currentUser[0] : '?'}
-            </span>
-          </button>
+          {userButtonEl}
         </div>
 
         <p className="subtitle">
@@ -1082,58 +1157,7 @@ function App() {
           </div>
         )}
 
-        {userMenuOpen && (
-          <div className="user-panel" ref={userPanelRef}>
-            {USERS.map((name) => (
-              <button
-                key={name}
-                type="button"
-                className={currentUser === name ? 'active' : ''}
-                onClick={() => chooseUser(name)}
-              >
-                <span className="user-dot" style={{ background: USER_COLORS[name].accent }} />
-                {name}
-              </button>
-            ))}
-
-            <div className="theme-toggle">
-              <button
-                type="button"
-                className={theme === 'light' ? 'active' : ''}
-                onClick={() => setTheme('light')}
-                aria-label="Lys modus"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <circle cx="12" cy="12" r="4.5" fill="none" stroke="currentColor" strokeWidth="2" />
-                  <path
-                    d="M12 2.5v2.5M12 19v2.5M21.5 12H19M5 12H2.5M18.4 5.6l-1.8 1.8M7.4 16.6l-1.8 1.8M18.4 18.4l-1.8-1.8M7.4 7.4 5.6 5.6"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                  />
-                </svg>
-                Lys
-              </button>
-              <button
-                type="button"
-                className={theme === 'dark' ? 'active' : ''}
-                onClick={() => setTheme('dark')}
-                aria-label="Mørk modus"
-              >
-                <svg viewBox="0 0 24 24" aria-hidden="true">
-                  <path
-                    d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.5 6.5 0 0 0 10.5 10.5Z"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinejoin="round"
-                  />
-                </svg>
-                Mørk
-              </button>
-            </div>
-          </div>
-        )}
+        {userPanelEl}
       </header>
 
       <main className="list" onScroll={onListScroll}>
@@ -1291,6 +1315,75 @@ function App() {
           </div>
         )}
       </form>
+        </div>
+      )}
+
+      {activeTab === 'middag' && (
+        <div className="tab-view" key="middag">
+          <header className={`header ${scrolled ? 'scrolled' : ''}`}>
+            <div className="header-top">
+              <span className="list-name">Middagsplanlegger</span>
+              {userButtonEl}
+            </div>
+            <p className="subtitle">Kommer snart</p>
+            {userPanelEl}
+          </header>
+          <main className="list placeholder-view">
+            <div className="empty">
+              <span className="placeholder-icon" aria-hidden="true">
+                🍽️
+              </span>
+              <h2>Middagsplanlegger</h2>
+              <p>Planlegg middager for uken sammen — kommer snart.</p>
+            </div>
+          </main>
+        </div>
+      )}
+
+      <nav className="tab-bar">
+        <button
+          type="button"
+          className={activeTab === 'liste' ? 'active' : ''}
+          onClick={() => setActiveTab('liste')}
+          aria-current={activeTab === 'liste'}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <rect x="3.5" y="4.5" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d="M4.7 7l0.9 0.9L8 6.3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <line x1="11" y1="7" x2="20.5" y2="7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+            <rect x="3.5" y="14.5" width="5" height="5" rx="1.2" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path d="M4.7 17l0.9 0.9L8 15.3" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            <line x1="11" y1="17" x2="20.5" y2="17" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+          </svg>
+          <span>Liste</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'middag' ? 'active' : ''}
+          onClick={() => setActiveTab('middag')}
+          aria-current={activeTab === 'middag'}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M6 2v6M8 2v6M10 2v6M8 8v14"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+            <path
+              d="M16 2c2 1 2 5 0 7-0.6 0.6-0.6 1 0 1v12"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          <span>Middag</span>
+        </button>
+      </nav>
 
       {confirmDialog && (
         <div className="modal-backdrop" onClick={() => setConfirmDialog(null)}>
@@ -1308,7 +1401,7 @@ function App() {
         </div>
       )}
 
-      {error && (
+      {showToast && (
         <div className="toast" role="alert">
           <span>{error}</span>
           <button type="button" onClick={() => setError(null)} aria-label="Lukk">
