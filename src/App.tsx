@@ -106,6 +106,14 @@ function formatDinnerMain(d: Dinner): string {
   return d.side ? `${d.name} med ${d.side}` : d.name
 }
 
+const COURSE_ORDER: CourseKey[] = ['main', 'side', 'starter', 'dessert']
+
+function dinnerImages(d: Dinner): string[] {
+  return COURSE_ORDER.map((course) => d.recipe_links?.[course]?.image_url).filter(
+    (url): url is string => !!url,
+  )
+}
+
 function formatRecipeStats(stats: RecipeStats): string[] {
   const parts: string[] = []
   if (stats.love_rating) parts.push(`❤️ ${stats.love_rating}/5`)
@@ -1940,15 +1948,25 @@ function App() {
                         className="day-dinner filled"
                         onClick={() => openDinnerEditor(key, dinner)}
                       >
-                        <div className="day-dinner-image-slot">
-                          {dinner.image_url ? (
-                            <img src={dinner.image_url} alt="" />
-                          ) : (
-                            <span className="day-dinner-icon" aria-hidden="true">
-                              🍽️
-                            </span>
-                          )}
-                        </div>
+                        {(() => {
+                          const images = dinnerImages(dinner)
+                          if (images.length === 0) {
+                            return (
+                              <div className="day-dinner-image-slot">
+                                <span className="day-dinner-icon" aria-hidden="true">
+                                  🍽️
+                                </span>
+                              </div>
+                            )
+                          }
+                          return (
+                            <div className={`day-dinner-image-slot split-${images.length}`}>
+                              {images.map((url, i) => (
+                                <img key={i} src={url} alt="" />
+                              ))}
+                            </div>
+                          )
+                        })()}
                         <div className="day-dinner-name">
                           <span className="day-dinner-main">{formatDinnerMain(dinner)}</span>
                           {dinner.starter && <span className="day-dinner-extra">Forrett: {dinner.starter}</span>}
