@@ -67,8 +67,12 @@ create policy "anon insert item-files" on storage.objects
 create policy "anon delete item-files" on storage.objects
   for delete using (bucket_id = 'item-files');
 
--- One planned dinner per calendar day. image_url is unused for now but
--- kept ready for when dinners get photos too.
+-- One planned dinner per calendar day. image_url mirrors the linked main
+-- recipe's image (if any) so the day card can show a thumbnail.
+-- recipe_links maps course ('main'/'side'/'starter'/'dessert') to a cached
+-- {recipe_id, image_url, love_rating, difficulty, prep_time_minutes} object
+-- from the separate Min Munch recipe book — no cross-database FK is
+-- possible, so this is a denormalized snapshot taken at pick time.
 create table if not exists dinners (
   id uuid primary key default gen_random_uuid(),
   date date not null unique,
@@ -77,6 +81,7 @@ create table if not exists dinners (
   starter text,
   dessert text,
   image_url text,
+  recipe_links jsonb not null default '{}'::jsonb,
   added_by text check (added_by in ('Nora', 'Henning')),
   created_at timestamptz not null default now()
 );

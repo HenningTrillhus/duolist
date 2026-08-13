@@ -1335,6 +1335,13 @@ li.done .item-text {
   word-break: break-word;
 }
 
+.day-dinner-stats {
+  font-size: 9.5px;
+  color: var(--accent);
+  opacity: 0.85;
+  margin-top: 2px;
+}
+
 .calendar-card {
   max-width: 340px;
   text-align: left;
@@ -1423,12 +1430,19 @@ li.done .item-text {
 
 .dinner-editor {
   text-align: left;
+  max-height: 82vh;
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
 }
 
 .dinner-editor h2 {
   margin: 0 0 16px;
   font-size: 18px;
   color: var(--text-h);
+}
+
+.dinner-field {
+  margin-bottom: 14px;
 }
 
 .dinner-field-label {
@@ -1449,13 +1463,101 @@ li.done .item-text {
   border-radius: 12px;
   padding: 12px 14px;
   color: var(--text-h);
-  margin-bottom: 14px;
+}
+
+.dinner-field-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.dinner-field-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.recipe-pick-button {
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 12px;
+  border: none;
+  background: var(--card);
+  color: var(--accent);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+
+.recipe-pick-button svg {
+  width: 18px;
+  height: 18px;
+}
+
+.recipe-chip {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--card);
+  border-radius: 12px;
+  padding: 6px 8px 6px 6px;
+}
+
+.recipe-chip img,
+.recipe-chip-icon {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+  object-fit: cover;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--accent-bg);
+  font-size: 15px;
+}
+
+.recipe-chip-title {
+  flex: 1;
+  min-width: 0;
+  font-size: 15px;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipe-chip-remove {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  border: none;
+  background: transparent;
+  color: var(--text);
+  font-size: 18px;
+  line-height: 1;
+  padding: 0;
+}
+
+.recipe-chip-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--text);
+  opacity: 0.75;
+  margin: 5px 0 0 2px;
 }
 
 .dinner-editor-actions {
   display: flex;
   align-items: center;
   gap: 10px;
+  margin-top: 4px;
 }
 
 .dinner-editor-actions .danger-text {
@@ -1488,4 +1590,109 @@ li.done .item-text {
 
 .dinner-editor-actions .confirm:disabled {
   opacity: 0.4;
+}
+
+.recipe-picker-sheet {
+  max-width: 440px;
+}
+
+.recipe-picker-filters {
+  display: flex;
+  gap: 8px;
+  padding: 0 22px 12px;
+  flex-shrink: 0;
+}
+
+.recipe-picker-filters input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 15px;
+  border: none;
+  background: var(--card);
+  border-radius: 10px;
+  padding: 10px 12px;
+  color: var(--text-h);
+}
+
+.recipe-picker-filters select {
+  flex-shrink: 0;
+  max-width: 118px;
+  font: inherit;
+  font-size: 12.5px;
+  border: none;
+  background: var(--card);
+  border-radius: 10px;
+  padding: 10px 6px;
+  color: var(--text-h);
+}
+
+.recipe-picker-body {
+  padding-top: 0;
+}
+
+.recipe-picker-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recipe-picker-row {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border: none;
+  background: var(--card);
+  border-radius: 14px;
+  padding: 8px;
+  text-align: left;
+}
+
+.recipe-picker-thumb {
+  flex-shrink: 0;
+  width: 48px;
+  height: 48px;
+  border-radius: 10px;
+  overflow: hidden;
+  background: var(--accent-bg);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 20px;
+}
+
+.recipe-picker-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+
+.recipe-picker-info {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.recipe-picker-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--text-h);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.recipe-picker-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  font-size: 11px;
+  color: var(--text);
+  opacity: 0.75;
 }

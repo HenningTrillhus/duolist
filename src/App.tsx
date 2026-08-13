@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, ReactNode, UIEvent } from 'react'
 import { supabase } from './lib/supabase'
+import { minMunch } from './lib/minMunch'
 import './App.css'
 
 type Item = {
@@ -31,6 +32,28 @@ type ShoppingList = {
   updated_at: string | null
 }
 
+type CourseKey = 'main' | 'side' | 'starter' | 'dessert'
+
+type RecipeStats = {
+  love_rating: number | null
+  difficulty: number | null
+  prep_time_minutes: number | null
+}
+
+type RecipeLink = RecipeStats & {
+  recipe_id: string
+  image_url: string | null
+}
+
+type RecipeLinks = Partial<Record<CourseKey, RecipeLink>>
+
+type Recipe = RecipeStats & {
+  id: string
+  title: string
+  type: string | null
+  image_url: string | null
+}
+
 type Dinner = {
   id: string
   date: string
@@ -39,12 +62,56 @@ type Dinner = {
   starter: string | null
   dessert: string | null
   image_url: string | null
+  recipe_links: RecipeLinks
   added_by: UserName | null
   created_at: string
 }
 
+const COURSE_LABELS: Record<CourseKey, string> = {
+  main: 'Middag',
+  side: 'Tilbehør',
+  starter: 'Forrett',
+  dessert: 'Dessert',
+}
+
+const COURSE_PLACEHOLDERS: Record<CourseKey, string> = {
+  main: 'Hva skal dere spise?',
+  side: 'F.eks. pommes frites',
+  starter: 'F.eks. salat',
+  dessert: 'F.eks. is',
+}
+
+// Min Munch's recipe "type" that best matches each course. Starter has no
+// direct equivalent, so it starts unfiltered.
+const COURSE_TYPE_FILTER: Record<CourseKey, string> = {
+  main: 'Middag',
+  side: 'Siderett',
+  starter: '',
+  dessert: 'Dessert',
+}
+
+const RECIPE_TYPES = [
+  'Frokost',
+  'Lunsj',
+  'Middag',
+  'Dessert',
+  'Saus',
+  'Tilbehør',
+  'Siderett',
+  'Bakevare',
+  'Drikke',
+]
+
 function formatDinnerMain(d: Dinner): string {
   return d.side ? `${d.name} med ${d.side}` : d.name
+}
+
+function formatRecipeStats(stats: RecipeStats): string[] {
+  const parts: string[] = []
+  if (stats.love_rating) parts.push(`❤️ ${stats.love_rating}/5`)
+  if (stats.difficulty) parts.push(`⭐ ${stats.difficulty}/5`)
+  if (stats.prep_time_minutes != null) parts.push(`⏱ ${stats.prep_time_minutes} min`)
+  return parts
 }
 
 type UserName = 'Nora' | 'Henning'
@@ -356,7 +423,15 @@ function App() {
   const [dinnerSideInput, setDinnerSideInput] = useState('')
   const [dinnerStarterInput, setDinnerStarterInput] = useState('')
   const [dinnerDessertInput, setDinnerDessertInput] = useState('')
+  const [dinnerRecipeLinks, setDinnerRecipeLinks] = useState<RecipeLinks>({})
   const dayStripRef = useRef<HTMLDivElement | null>(null)
+
+  const [recipePickerCourse, setRecipePickerCourse] = useState<CourseKey | null>(null)
+  const [recipes, setRecipes] = useState<Recipe[] | null>(null)
+  const [recipesLoading, setRecipesLoading] = useState(false)
+  const [recipesError, setRecipesError] = useState<string | null>(null)
+  const [recipeSearch, setRecipeSearch] = useState('')
+  const [recipeTypeFilter, setRecipeTypeFilter] = useState('')
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   const [scrolled, setScrolled] = useState(false)
@@ -976,6 +1051,7 @@ function App() {
     setDinnerSideInput(existing?.side ?? '')
     setDinnerStarterInput(existing?.starter ?? '')
     setDinnerDessertInput(existing?.dessert ?? '')
+    setDinnerRecipeLinks(existing?.recipe_links ?? {})
   }
 
   const closeDinnerEditor = () => setDinnerEditorDate(null)
@@ -989,16 +1065,16 @@ function App() {
     const side = dinnerSideInput.trim() || null
     const starter = dinnerStarterInput.trim() || null
     const dessert = dinnerDessertInput.trim() || null
+    const recipe_links = dinnerRecipeLinks
+    const imageUrl = recipe_links.main?.image_url ?? null
     const existing = dinners.find((d) => d.date === key)
     closeDinnerEditor()
 
     if (existing) {
       const previous = existing
-      setDinners((prev) => prev.map((d) => (d.id === existing.id ? { ...d, name, side, starter, dessert } : d)))
-      const { error } = await supabase
-        .from('dinners')
-        .update({ name, side, starter, dessert })
-        .eq('id', existing.id)
+      const updated = { name, side, starter, dessert, recipe_links, image_url: imageUrl }
+      setDinners((prev) => prev.map((d) => (d.id === existing.id ? { ...d, ...updated } : d)))
+      const { error } = await supabase.from('dinners').update(updated).eq('id', existing.id)
       if (error) {
         setDinners((prev) => prev.map((d) => (d.id === previous.id ? previous : d)))
         setError(error.message)
@@ -1014,18 +1090,155 @@ function App() {
       side,
       starter,
       dessert,
-      image_url: null,
+      image_url: imageUrl,
+      recipe_links,
       added_by: currentUser,
       created_at: new Date().toISOString(),
     }
     setDinners((prev) => [...prev, optimistic])
-    const { error } = await supabase
-      .from('dinners')
-      .insert({ id: optimisticId, date: key, name, side, starter, dessert, added_by: currentUser })
+    const { error } = await supabase.from('dinners').insert({
+      id: optimisticId,
+      date: key,
+      name,
+      side,
+      starter,
+      dessert,
+      image_url: imageUrl,
+      recipe_links,
+      added_by: currentUser,
+    })
     if (error) {
       setDinners((prev) => prev.filter((d) => d.id !== optimisticId))
       setError(error.message)
     }
+  }
+
+  const ensureRecipesLoaded = async () => {
+    if (recipes || recipesLoading) return
+    setRecipesLoading(true)
+    setRecipesError(null)
+    const { data, error } = await minMunch
+      .from('recipes')
+      .select('id, title, type, image_url, love_rating, difficulty, prep_time_minutes')
+      .order('title', { ascending: true })
+    setRecipesLoading(false)
+    if (error) {
+      setRecipesError(error.message)
+      return
+    }
+    setRecipes(data)
+  }
+
+  const openRecipePicker = (course: CourseKey) => {
+    setRecipeSearch('')
+    setRecipeTypeFilter(COURSE_TYPE_FILTER[course])
+    setRecipePickerCourse(course)
+    ensureRecipesLoaded()
+  }
+
+  const closeRecipePicker = () => setRecipePickerCourse(null)
+
+  const courseInputSetters: Record<CourseKey, (v: string) => void> = {
+    main: setDinnerNameInput,
+    side: setDinnerSideInput,
+    starter: setDinnerStarterInput,
+    dessert: setDinnerDessertInput,
+  }
+
+  const pickRecipe = (recipe: Recipe) => {
+    const course = recipePickerCourse
+    if (!course) return
+    courseInputSetters[course](recipe.title)
+    setDinnerRecipeLinks((prev) => ({
+      ...prev,
+      [course]: {
+        recipe_id: recipe.id,
+        image_url: recipe.image_url,
+        love_rating: recipe.love_rating,
+        difficulty: recipe.difficulty,
+        prep_time_minutes: recipe.prep_time_minutes,
+      },
+    }))
+    setRecipePickerCourse(null)
+  }
+
+  const unlinkCourseRecipe = (course: CourseKey) => {
+    setDinnerRecipeLinks((prev) => {
+      const next = { ...prev }
+      delete next[course]
+      return next
+    })
+  }
+
+  const courseValues: Record<CourseKey, string> = {
+    main: dinnerNameInput,
+    side: dinnerSideInput,
+    starter: dinnerStarterInput,
+    dessert: dinnerDessertInput,
+  }
+
+  const renderCourseField = (course: CourseKey, required: boolean) => {
+    const link = dinnerRecipeLinks[course]
+    const value = courseValues[course]
+    const stats = link ? formatRecipeStats(link) : []
+    return (
+      <div className="dinner-field" key={course}>
+        <label className="dinner-field-label" htmlFor={`dinner-${course}-input`}>
+          {COURSE_LABELS[course]}
+          {!required && ' (valgfritt)'}
+        </label>
+        <div className="dinner-field-row">
+          {link ? (
+            <div className="recipe-chip">
+              {link.image_url ? (
+                <img src={link.image_url} alt="" />
+              ) : (
+                <span className="recipe-chip-icon" aria-hidden="true">
+                  🍽️
+                </span>
+              )}
+              <span className="recipe-chip-title">{value}</span>
+              <button
+                type="button"
+                className="recipe-chip-remove"
+                aria-label="Fjern kobling til oppskrift"
+                onClick={() => unlinkCourseRecipe(course)}
+              >
+                ×
+              </button>
+            </div>
+          ) : (
+            <input
+              id={`dinner-${course}-input`}
+              type="text"
+              autoComplete="off"
+              placeholder={COURSE_PLACEHOLDERS[course]}
+              value={value}
+              onChange={(e) => courseInputSetters[course](e.target.value)}
+              autoFocus={course === 'main'}
+            />
+          )}
+          <button
+            type="button"
+            className="recipe-pick-button"
+            onClick={() => openRecipePicker(course)}
+            aria-label={`Velg ${COURSE_LABELS[course].toLowerCase()} fra Min Munch`}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M12 6.5c-1.8-1.1-4-1.3-6-.8v12.6c2-.5 4.2-.3 6 .8 1.8-1.1 4-1.3 6-.8V5.7c-2-.5-4.2-.3-6 .8Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.7"
+                strokeLinejoin="round"
+              />
+              <path d="M12 6.5v12.6" fill="none" stroke="currentColor" strokeWidth="1.7" />
+            </svg>
+          </button>
+        </div>
+        {stats.length > 0 && <div className="recipe-chip-stats">{stats.join('   ')}</div>}
+      </div>
+    )
   }
 
   const askDeleteDinner = () => {
@@ -1740,6 +1953,11 @@ function App() {
                           <span className="day-dinner-main">{formatDinnerMain(dinner)}</span>
                           {dinner.starter && <span className="day-dinner-extra">Forrett: {dinner.starter}</span>}
                           {dinner.dessert && <span className="day-dinner-extra">Dessert: {dinner.dessert}</span>}
+                          {dinner.recipe_links?.main && (
+                            <span className="day-dinner-stats">
+                              {formatRecipeStats(dinner.recipe_links.main).join('   ')}
+                            </span>
+                          )}
                         </div>
                       </button>
                     ) : (
@@ -1916,51 +2134,10 @@ function App() {
           <div className="modal-card dinner-editor" onClick={(e) => e.stopPropagation()}>
             <h2>{formatDinnerEditorTitle(dinnerEditorDate)}</h2>
             <form onSubmit={saveDinner}>
-              <label className="dinner-field-label" htmlFor="dinner-name-input">
-                Middag
-              </label>
-              <input
-                id="dinner-name-input"
-                type="text"
-                autoComplete="off"
-                placeholder="Hva skal dere spise?"
-                value={dinnerNameInput}
-                onChange={(e) => setDinnerNameInput(e.target.value)}
-                autoFocus
-              />
-              <label className="dinner-field-label" htmlFor="dinner-side-input">
-                Tilbehør (valgfritt)
-              </label>
-              <input
-                id="dinner-side-input"
-                type="text"
-                autoComplete="off"
-                placeholder="F.eks. pommes frites"
-                value={dinnerSideInput}
-                onChange={(e) => setDinnerSideInput(e.target.value)}
-              />
-              <label className="dinner-field-label" htmlFor="dinner-starter-input">
-                Forrett (valgfritt)
-              </label>
-              <input
-                id="dinner-starter-input"
-                type="text"
-                autoComplete="off"
-                placeholder="F.eks. salat"
-                value={dinnerStarterInput}
-                onChange={(e) => setDinnerStarterInput(e.target.value)}
-              />
-              <label className="dinner-field-label" htmlFor="dinner-dessert-input">
-                Dessert (valgfritt)
-              </label>
-              <input
-                id="dinner-dessert-input"
-                type="text"
-                autoComplete="off"
-                placeholder="F.eks. is"
-                value={dinnerDessertInput}
-                onChange={(e) => setDinnerDessertInput(e.target.value)}
-              />
+              {renderCourseField('main', true)}
+              {renderCourseField('side', false)}
+              {renderCourseField('starter', false)}
+              {renderCourseField('dessert', false)}
               <div className="dinner-editor-actions">
                 {dinners.some((d) => d.date === dinnerEditorDate) && (
                   <button type="button" className="danger-text" onClick={askDeleteDinner}>
@@ -1975,6 +2152,83 @@ function App() {
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {recipePickerCourse && (
+        <div className="modal-backdrop" onClick={closeRecipePicker}>
+          <div className="history-sheet recipe-picker-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="history-header">
+              <h2>Velg {COURSE_LABELS[recipePickerCourse].toLowerCase()}</h2>
+              <button type="button" className="history-close" onClick={closeRecipePicker} aria-label="Lukk">
+                ×
+              </button>
+            </div>
+            <div className="recipe-picker-filters">
+              <input
+                type="text"
+                autoComplete="off"
+                placeholder="Søk i oppskrifter…"
+                value={recipeSearch}
+                onChange={(e) => setRecipeSearch(e.target.value)}
+                autoFocus
+              />
+              <select value={recipeTypeFilter} onChange={(e) => setRecipeTypeFilter(e.target.value)}>
+                <option value="">Alle typer</option>
+                {RECIPE_TYPES.map((t) => (
+                  <option key={t} value={t}>
+                    {t}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="history-body recipe-picker-body">
+              {recipesLoading ? (
+                <div className="loading">
+                  <div className="spinner" aria-label="Laster" />
+                </div>
+              ) : recipesError ? (
+                <p className="loading-error">Feil: {recipesError}</p>
+              ) : (
+                (() => {
+                  const filtered = (recipes ?? []).filter((r) => {
+                    if (recipeTypeFilter && r.type !== recipeTypeFilter) return false
+                    if (recipeSearch && !r.title.toLowerCase().includes(recipeSearch.toLowerCase())) return false
+                    return true
+                  })
+                  if (filtered.length === 0) {
+                    return <div className="empty">Ingen oppskrifter matcher</div>
+                  }
+                  return (
+                    <ul className="recipe-picker-list">
+                      {filtered.map((r) => {
+                        const stats = formatRecipeStats(r)
+                        return (
+                          <li key={r.id}>
+                            <button type="button" className="recipe-picker-row" onClick={() => pickRecipe(r)}>
+                              <div className="recipe-picker-thumb">
+                                {r.image_url ? (
+                                  <img src={r.image_url} alt="" />
+                                ) : (
+                                  <span aria-hidden="true">🍽️</span>
+                                )}
+                              </div>
+                              <div className="recipe-picker-info">
+                                <span className="recipe-picker-title">{r.title}</span>
+                                {stats.length > 0 && (
+                                  <span className="recipe-picker-stats">{stats.join('   ')}</span>
+                                )}
+                              </div>
+                            </button>
+                          </li>
+                        )
+                      })}
+                    </ul>
+                  )
+                })()
+              )}
+            </div>
           </div>
         </div>
       )}
