@@ -221,6 +221,28 @@ function sortByPosition<T extends { position: number }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => a.position - b.position)
 }
 
+type ConfettiPiece = {
+  id: number
+  color: string
+  dx: number
+  dy: number
+  rotate: number
+  delay: number
+}
+
+const CONFETTI_COLORS = ['#ff4d6d', '#ffd60a', '#06d6a0', '#4cc9f0', '#b388ff', '#ff9f1c', '#f72585']
+
+function makeConfetti(): ConfettiPiece[] {
+  return Array.from({ length: 12 }, (_, i) => ({
+    id: i,
+    color: CONFETTI_COLORS[Math.floor(Math.random() * CONFETTI_COLORS.length)],
+    dx: (Math.random() - 0.5) * 70,
+    dy: -(18 + Math.random() * 40),
+    rotate: (Math.random() - 0.5) * 320,
+    delay: Math.random() * 0.05,
+  }))
+}
+
 // Checked-off items sink to the bottom of their list/store-group, most
 // recently completed last, so ticking something off always sends it further
 // down rather than dropping it wherever its original position happened to be.
@@ -470,6 +492,7 @@ function App() {
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set())
   const [justCompletedIds, setJustCompletedIds] = useState<Set<string>>(new Set())
+  const [confettiBursts, setConfettiBursts] = useState<Map<string, ConfettiPiece[]>>(new Map())
   const [scrolled, setScrolled] = useState(false)
 
   const [text, setText] = useState('')
@@ -915,9 +938,15 @@ function App() {
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)))
     if (nextDone) {
       setJustCompletedIds((prev) => new Set(prev).add(item.id))
+      setConfettiBursts((prev) => new Map(prev).set(item.id, makeConfetti()))
       setTimeout(() => {
         setJustCompletedIds((prev) => {
           const next = new Set(prev)
+          next.delete(item.id)
+          return next
+        })
+        setConfettiBursts((prev) => {
+          const next = new Map(prev)
           next.delete(item.id)
           return next
         })
@@ -1491,7 +1520,7 @@ function App() {
         className={classes}
         style={style}
         layout="position"
-        initial={justAddedIds.has(item.id) ? { opacity: 0, y: -16, scale: 0.9, rotate: -1.5 } : false}
+        initial={justAddedIds.has(item.id) ? { opacity: 0, y: 60, scale: 0.88, rotate: 2 } : false}
         animate={{
           opacity: isRemoving ? 0 : 1,
           scale: isRemoving ? 0.94 : isDragging ? 1.03 : 1,
@@ -1500,31 +1529,44 @@ function App() {
         }}
         transition={{
           layout: { type: 'spring', stiffness: 260, damping: 24, mass: 0.9 },
+          y: { type: 'spring', stiffness: 260, damping: 22 },
           default: { type: 'spring', stiffness: 420, damping: 26 },
         }}
       >
-        <button
-          type="button"
-          className={`checkbox ${isTodoList ? 'checkbox-priority' : ''}`}
-          aria-label={item.done ? 'Merk som ikke fullført' : 'Merk som fullført'}
-          aria-pressed={item.done}
-          onClick={() => toggleItem(item)}
-        >
-          {item.done ? (
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path
-                d="M5 13l4 4L19 7"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="3"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-              />
-            </svg>
-          ) : (
-            isTodoList && <span className="priority-number">{priorityRanks.get(item.id)}</span>
-          )}
-        </button>
+        <span className="checkbox-wrap">
+          <button
+            type="button"
+            className={`checkbox ${isTodoList ? 'checkbox-priority' : ''}`}
+            aria-label={item.done ? 'Merk som ikke fullført' : 'Merk som fullført'}
+            aria-pressed={item.done}
+            onClick={() => toggleItem(item)}
+          >
+            {item.done ? (
+              <svg viewBox="0 0 24 24" aria-hidden="true">
+                <path
+                  d="M5 13l4 4L19 7"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                />
+              </svg>
+            ) : (
+              isTodoList && <span className="priority-number">{priorityRanks.get(item.id)}</span>
+            )}
+          </button>
+          {confettiBursts.get(item.id)?.map((piece) => (
+            <motion.span
+              key={piece.id}
+              className="confetti-piece"
+              style={{ background: piece.color }}
+              initial={{ opacity: 1, x: 0, y: 0, scale: 1, rotate: 0 }}
+              animate={{ opacity: 0, x: piece.dx, y: piece.dy, scale: 0.4, rotate: piece.rotate }}
+              transition={{ duration: 0.65, delay: piece.delay, ease: 'easeOut' }}
+            />
+          ))}
+        </span>
 
         {editingId === item.id ? (
           <form className="edit-form" onSubmit={saveEdit}>

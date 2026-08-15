@@ -763,6 +763,12 @@
   border-radius: 50%;
 }
 
+.checkbox-wrap {
+  position: relative;
+  flex-shrink: 0;
+  display: flex;
+}
+
 .checkbox {
   flex-shrink: 0;
   width: 26px;
@@ -776,6 +782,18 @@
   color: #fff;
   padding: 0;
   transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+
+.confetti-piece {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  margin: -3px 0 0 -3px;
+  pointer-events: none;
+  z-index: 6;
 }
 
 .checkbox svg {
