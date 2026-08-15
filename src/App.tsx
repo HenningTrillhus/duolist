@@ -529,6 +529,7 @@ function App() {
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
   const [pendingImagePreview, setPendingImagePreview] = useState<string | null>(null)
   const [pendingLink, setPendingLink] = useState('')
+  const [pendingNotify, setPendingNotify] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
 
   const [editingId, setEditingId] = useState<string | null>(null)
@@ -541,6 +542,7 @@ function App() {
   const [editImagePreview, setEditImagePreview] = useState<string | null>(null)
   const [editImageRemoved, setEditImageRemoved] = useState(false)
   const [editLink, setEditLink] = useState('')
+  const [editNotify, setEditNotify] = useState(false)
   const editFileInputRef = useRef<HTMLInputElement>(null)
 
   // Load lists once, seeding a default list on a brand new project.
@@ -661,6 +663,7 @@ function App() {
     setPendingImageFile(null)
     setPendingImagePreview(null)
     setPendingLink('')
+    setPendingNotify(false)
 
     let cancelled = false
     supabase
@@ -918,6 +921,7 @@ function App() {
     const finalLink = normalizeLink(pendingLink)
     const imageFile = pendingImageFile
     const localPreview = pendingImagePreview
+    const shouldNotify = pendingNotify
 
     const optimisticId = crypto.randomUUID()
     const optimisticItem: Item = {
@@ -944,6 +948,7 @@ function App() {
     setPendingLink('')
     setPendingImageFile(null)
     setPendingImagePreview(null)
+    setPendingNotify(false)
     setAttachOpen(false)
 
     let finalImageUrl = localPreview
@@ -966,7 +971,7 @@ function App() {
       setError(error.message)
       setText(value)
       setQuantity(originalQuantity)
-    } else if (currentUser) {
+    } else if (currentUser && shouldNotify) {
       notifyOthers({
         excludeUser: currentUser,
         title: activeList.name,
@@ -1179,6 +1184,7 @@ function App() {
     setEditImagePreview(item.image_url)
     setEditImageRemoved(false)
     setEditLink(item.link_url ?? '')
+    setEditNotify(false)
   }
 
   const cancelEdit = () => {
@@ -1195,6 +1201,7 @@ function App() {
     const hasQuantity = editQuantity.trim() !== '' && parsedQuantity > 0
     const finalStore = editStoreChoice === CUSTOM_STORE ? editCustomStore.trim() || null : editStoreChoice || null
     const finalLink = normalizeLink(editLink)
+    const shouldNotify = editNotify
     const previous = items.find((i) => i.id === editingId)
     if (!previous) return
 
@@ -1233,13 +1240,12 @@ function App() {
     if (error) {
       setItems((prev) => prev.map((i) => (i.id === previous.id ? previous : i)))
       setError(error.message)
-    } else if (currentUser && activeList && value !== previous.text) {
-      notifyOthers({
-        excludeUser: currentUser,
-        title: activeList.name,
-        body: `${currentUser} endret «${previous.text}» til «${value}»`,
-        url: '/',
-      })
+    } else if (currentUser && activeList && shouldNotify) {
+      const body =
+        value !== previous.text
+          ? `${currentUser} endret «${previous.text}» til «${value}»`
+          : `${currentUser} endret «${value}»`
+      notifyOthers({ excludeUser: currentUser, title: activeList.name, body, url: '/' })
     }
   }
 
@@ -1710,6 +1716,35 @@ function App() {
                 </a>
               )}
             </div>
+            {pushSupported && (
+              <div className="attach-notify-row">
+                <button
+                  type="button"
+                  className={`bell-checkbox ${editNotify ? 'active' : ''}`}
+                  onClick={() => setEditNotify((v) => !v)}
+                  aria-pressed={editNotify}
+                  aria-label="Varsle den andre om denne endringen"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M6 17h12l-1.5-2.2V10a4.5 4.5 0 0 0-9 0v4.8L6 17Z"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M10 19.5a2 2 0 0 0 4 0"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+                <span>Varsle om denne endringen</span>
+              </div>
+            )}
             <div className="edit-form-row">
               <input
                 type="text"
@@ -2019,6 +2054,9 @@ function App() {
                 strokeWidth="1.8"
                 strokeLinecap="round"
               />
+              {!pushEnabled && (
+                <path d="M4.5 4.5 19.5 19.5" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+              )}
             </svg>
           </button>
         </div>
@@ -2358,6 +2396,35 @@ function App() {
                 onChange={(e) => setPendingLink(e.target.value)}
               />
             </div>
+            {pushSupported && (
+              <div className="attach-notify-row">
+                <button
+                  type="button"
+                  className={`bell-checkbox ${pendingNotify ? 'active' : ''}`}
+                  onClick={() => setPendingNotify((v) => !v)}
+                  aria-pressed={pendingNotify}
+                  aria-label="Varsle den andre om denne varen"
+                >
+                  <svg viewBox="0 0 24 24" aria-hidden="true">
+                    <path
+                      d="M6 17h12l-1.5-2.2V10a4.5 4.5 0 0 0-9 0v4.8L6 17Z"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinejoin="round"
+                    />
+                    <path
+                      d="M10 19.5a2 2 0 0 0 4 0"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="1.8"
+                      strokeLinecap="round"
+                    />
+                  </svg>
+                </button>
+                <span>Varsle om denne</span>
+              </div>
+            )}
           </div>
         )}
       </form>
