@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { ChangeEvent, FormEvent, ReactNode, UIEvent } from 'react'
+import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, UIEvent } from 'react'
 import { supabase } from './lib/supabase'
 import { minMunch } from './lib/minMunch'
 import './App.css'
@@ -18,6 +18,7 @@ type Item = {
   completed_at: string | null
   archived: boolean
   created_at: string
+  position: number
 }
 
 type HistoryEntry = Item & { lists: { name: string } | null }
@@ -213,6 +214,19 @@ function storesForType(type: ListType): StoreOption[] {
 
 function storeColorFor(stores: StoreOption[], name: string): string {
   return stores.find((s) => s.name === name)?.color ?? ''
+}
+
+function sortByPosition<T extends { position: number }>(rows: T[]): T[] {
+  return [...rows].sort((a, b) => a.position - b.position)
+}
+
+function nextPositionFor(list: Item[], index: number): number {
+  const prev = index > 0 ? list[index - 1] : null
+  const next = index < list.length - 1 ? list[index + 1] : null
+  if (prev && next) return (prev.position + next.position) / 2
+  if (prev) return prev.position + 1
+  if (next) return next.position - 1
+  return Date.now() / 1000
 }
 
 function sortByCreatedAt<T extends { created_at: string }>(rows: T[]): T[] {
@@ -455,6 +469,15 @@ function App() {
   const [newType, setNewType] = useState<ListType>('grocery')
   const panelRef = useRef<HTMLDivElement>(null)
 
+  const [listMenuId, setListMenuId] = useState<string | null>(null)
+  const listMenuRef = useRef<HTMLDivElement>(null)
+  const [editingListId, setEditingListId] = useState<string | null>(null)
+  const [editListName, setEditListName] = useState('')
+  const [editListType, setEditListType] = useState<ListType>('grocery')
+
+  const [draggingId, setDraggingId] = useState<string | null>(null)
+  const itemListRef = useRef<HTMLUListElement | null>(null)
+
   const [attachOpen, setAttachOpen] = useState(false)
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
   const [pendingImagePreview, setPendingImagePreview] = useState<string | null>(null)
@@ -598,7 +621,7 @@ function App() {
       .select('*')
       .eq('list_id', activeId)
       .eq('archived', false)
-      .order('created_at', { ascending: true })
+      .order('position', { ascending: true })
       .then(({ data, error }) => {
         if (cancelled) return
         if (error) {
@@ -617,16 +640,16 @@ function App() {
           if (payload.eventType === 'INSERT') {
             const row = payload.new as Item
             if (row.archived) return
-            setItems((prev) => (prev.some((i) => i.id === row.id) ? prev : sortByCreatedAt([...prev, row])))
+            setItems((prev) => (prev.some((i) => i.id === row.id) ? prev : sortByPosition([...prev, row])))
           } else if (payload.eventType === 'UPDATE') {
             const row = payload.new as Item
             if (row.archived) {
               setItems((prev) => prev.filter((i) => i.id !== row.id))
             } else {
               setItems((prev) =>
-                prev.some((i) => i.id === row.id)
-                  ? prev.map((i) => (i.id === row.id ? row : i))
-                  : sortByCreatedAt([...prev, row]),
+                sortByPosition(
+                  prev.some((i) => i.id === row.id) ? prev.map((i) => (i.id === row.id ? row : i)) : [...prev, row],
+                ),
               )
             }
           } else if (payload.eventType === 'DELETE') {
@@ -649,11 +672,78 @@ function App() {
       if (panelRef.current && !panelRef.current.contains(e.target as Node)) {
         setSwitcherOpen(false)
         setCreating(false)
+        setListMenuId(null)
+        setEditingListId(null)
       }
     }
     document.addEventListener('mousedown', onClickOutside)
     return () => document.removeEventListener('mousedown', onClickOutside)
   }, [switcherOpen])
+
+  useEffect(() => {
+    if (!listMenuId) return
+    const onClickOutside = (e: MouseEvent) => {
+      if (listMenuRef.current && !listMenuRef.current.contains(e.target as Node)) {
+        setListMenuId(null)
+      }
+    }
+    document.addEventListener('mousedown', onClickOutside)
+    return () => document.removeEventListener('mousedown', onClickOutside)
+  }, [listMenuId])
+
+  // Reorder a todo list's items by dragging: live-splice the item into the
+  // hovered slot as the pointer moves, then persist a single midpoint
+  // position value between its new neighbours on release.
+  useEffect(() => {
+    if (!draggingId) return
+    const draggedId = draggingId
+    const onMove = (e: PointerEvent) => {
+      const container = itemListRef.current
+      if (!container) return
+      const liNodes = Array.from(container.querySelectorAll('li[data-item-id]')) as HTMLLIElement[]
+      if (liNodes.length === 0) return
+      let targetIndex = liNodes.length - 1
+      for (let i = 0; i < liNodes.length; i++) {
+        const rect = liNodes[i].getBoundingClientRect()
+        if (e.clientY < rect.top + rect.height / 2) {
+          targetIndex = i
+          break
+        }
+      }
+      setItems((prev) => {
+        const currentIndex = prev.findIndex((it) => it.id === draggedId)
+        if (currentIndex === -1 || currentIndex === targetIndex) return prev
+        const next = [...prev]
+        const [moved] = next.splice(currentIndex, 1)
+        next.splice(targetIndex, 0, moved)
+        return next
+      })
+    }
+    const onUp = () => {
+      setDraggingId(null)
+      setItems((prev) => {
+        const index = prev.findIndex((it) => it.id === draggedId)
+        if (index === -1) return prev
+        const newPosition = nextPositionFor(prev, index)
+        supabase
+          .from('items')
+          .update({ position: newPosition })
+          .eq('id', draggedId)
+          .then(({ error }) => {
+            if (error) setError(error.message)
+          })
+        return prev.map((it) => (it.id === draggedId ? { ...it, position: newPosition } : it))
+      })
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+    window.addEventListener('pointercancel', onUp)
+    return () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      window.removeEventListener('pointercancel', onUp)
+    }
+  }, [draggingId])
 
   useEffect(() => {
     document.documentElement.setAttribute('data-theme', theme)
@@ -769,8 +859,9 @@ function App() {
       completed_at: null,
       archived: false,
       created_at: new Date().toISOString(),
+      position: Date.now() / 1000,
     }
-    setItems((prev) => sortByCreatedAt([...prev, optimisticItem]))
+    setItems((prev) => sortByPosition([...prev, optimisticItem]))
     setText('')
     setQuantity('')
     setCustomStore('')
@@ -822,14 +913,14 @@ function App() {
     if (item.done) {
       const { error } = await supabase.from('items').update({ archived: true }).eq('id', item.id)
       if (error) {
-        setItems((prev) => sortByCreatedAt([...prev, item]))
+        setItems((prev) => sortByPosition([...prev, item]))
         setError(error.message)
       }
       return
     }
     const { error } = await supabase.from('items').delete().eq('id', item.id)
     if (error) {
-      setItems((prev) => sortByCreatedAt([...prev, item]))
+      setItems((prev) => sortByPosition([...prev, item]))
       setError(error.message)
       return
     }
@@ -842,7 +933,7 @@ function App() {
     setItems((prev) => prev.filter((i) => !doneIds.includes(i.id)))
     const { error } = await supabase.from('items').update({ archived: true }).in('id', doneIds)
     if (error) {
-      setItems((prev) => sortByCreatedAt([...prev, ...doneItems]))
+      setItems((prev) => sortByPosition([...prev, ...doneItems]))
       setError(error.message)
     }
   }
@@ -910,6 +1001,64 @@ function App() {
     setNewType('grocery')
     setCreating(false)
     setSwitcherOpen(false)
+  }
+
+  const startEditList = (list: ShoppingList) => {
+    setListMenuId(null)
+    setEditingListId(list.id)
+    setEditListName(list.name)
+    setEditListType(list.type)
+  }
+
+  const cancelEditList = () => {
+    setEditingListId(null)
+  }
+
+  const saveEditList = async (e: FormEvent) => {
+    e.preventDefault()
+    if (!editingListId) return
+    const name = editListName.trim()
+    if (!name) return
+    const id = editingListId
+    const previous = lists.find((l) => l.id === id)
+    setLists((prev) => prev.map((l) => (l.id === id ? { ...l, name, type: editListType } : l)))
+    setEditingListId(null)
+    const { error } = await supabase.from('lists').update({ name, type: editListType }).eq('id', id)
+    if (error) {
+      if (previous) setLists((prev) => prev.map((l) => (l.id === id ? previous : l)))
+      setError(error.message)
+    }
+  }
+
+  const deleteList = (list: ShoppingList) => {
+    setConfirmDialog(null)
+    setLists((prev) => prev.filter((l) => l.id !== list.id))
+    if (activeId === list.id) {
+      const next = lists.find((l) => l.id !== list.id)
+      if (next) setActiveId(next.id)
+    }
+    supabase
+      .from('lists')
+      .delete()
+      .eq('id', list.id)
+      .then(({ error }) => {
+        if (error) {
+          setLists((prev) => sortByCreatedAt([...prev, list]))
+          setError(error.message)
+        }
+      })
+  }
+
+  const askDeleteList = (list: ShoppingList) => {
+    setListMenuId(null)
+    if (lists.length <= 1) {
+      setError('Du må ha minst én liste')
+      return
+    }
+    setConfirmDialog({
+      message: `Slette listen «${list.name}»? Alle varer i den blir også slettet.`,
+      onConfirm: () => deleteList(list),
+    })
   }
 
   const startEdit = (item: Item) => {
@@ -1276,6 +1425,25 @@ function App() {
   const remaining = items.filter((item) => !item.done).length
   const hasDone = items.some((item) => item.done)
 
+  const isTodoList = activeList?.type === 'todo'
+
+  // Priority number = live rank among not-yet-done items, so finishing #1
+  // automatically bumps #2 up to #1.
+  const priorityRanks = useMemo(() => {
+    const map = new Map<string, number>()
+    if (!isTodoList) return map
+    let rank = 1
+    for (const item of items) {
+      if (!item.done) map.set(item.id, rank++)
+    }
+    return map
+  }, [items, isTodoList])
+
+  const startItemDrag = (e: ReactPointerEvent, itemId: string) => {
+    e.preventDefault()
+    setDraggingId(itemId)
+  }
+
   const renderItem = (item: Item) => {
     const owner = item.added_by
     const style = owner ? { borderLeftColor: USER_COLORS[owner].accent } : undefined
@@ -1283,19 +1451,20 @@ function App() {
       item.done ? 'done' : '',
       removingIds.has(item.id) ? 'removing' : '',
       editingId === item.id ? 'editing' : '',
+      draggingId === item.id ? 'dragging' : '',
     ]
       .filter(Boolean)
       .join(' ')
     return (
-      <li key={item.id} className={classes} style={style}>
+      <li key={item.id} data-item-id={item.id} className={classes} style={style}>
         <button
           type="button"
-          className="checkbox"
+          className={`checkbox ${isTodoList ? 'checkbox-priority' : ''}`}
           aria-label={item.done ? 'Merk som ikke fullført' : 'Merk som fullført'}
           aria-pressed={item.done}
           onClick={() => toggleItem(item)}
         >
-          {item.done && (
+          {item.done ? (
             <svg viewBox="0 0 24 24" aria-hidden="true">
               <path
                 d="M5 13l4 4L19 7"
@@ -1306,6 +1475,8 @@ function App() {
                 strokeLinejoin="round"
               />
             </svg>
+          ) : (
+            isTodoList && <span className="priority-number">{priorityRanks.get(item.id)}</span>
           )}
         </button>
 
@@ -1472,6 +1643,23 @@ function App() {
                 </span>
               )}
             </button>
+            {isTodoList && (
+              <button
+                type="button"
+                className="drag-handle"
+                aria-label={`Flytt ${item.text}`}
+                onPointerDown={(e) => startItemDrag(e, item.id)}
+              >
+                <svg viewBox="0 0 24 24" aria-hidden="true">
+                  <circle cx="9" cy="6" r="1.6" fill="currentColor" />
+                  <circle cx="15" cy="6" r="1.6" fill="currentColor" />
+                  <circle cx="9" cy="12" r="1.6" fill="currentColor" />
+                  <circle cx="15" cy="12" r="1.6" fill="currentColor" />
+                  <circle cx="9" cy="18" r="1.6" fill="currentColor" />
+                  <circle cx="15" cy="18" r="1.6" fill="currentColor" />
+                </svg>
+              </button>
+            )}
             <button
               type="button"
               className="delete"
@@ -1491,7 +1679,11 @@ function App() {
     if (items.length === 0) {
       listContent = <div className="empty">{LIST_TYPE_EMPTY[activeList.type]}</div>
     } else if (activeList.type === 'todo') {
-      listContent = <ul>{items.map(renderItem)}</ul>
+      listContent = (
+        <ul ref={itemListRef} className={draggingId ? 'dragging-active' : ''}>
+          {items.map(renderItem)}
+        </ul>
+      )
     } else {
       const groups = groupByStore(items, availableStores)
       if (groups.length === 1 && groups[0].store === null) {
@@ -1707,23 +1899,85 @@ function App() {
               {lists.map((l) => {
                 const updated = formatUpdated(l.updated_at)
                 return (
-                  <li key={l.id}>
-                    <button
-                      type="button"
-                      className={l.id === activeList.id ? 'active' : ''}
-                      onClick={() => selectList(l.id)}
-                    >
-                      <span className="switcher-name">{l.name}</span>
-                      <span className="switcher-meta">
-                        <span className="switcher-type">{LIST_TYPE_LABELS[l.type]}</span>
-                        {updated && (
-                          <>
-                            <span className="switcher-dot">·</span>
-                            <span className="switcher-updated">{updated}</span>
-                          </>
-                        )}
-                      </span>
-                    </button>
+                  <li key={l.id} className="switcher-row">
+                    {editingListId === l.id ? (
+                      <form className="switcher-edit-form" onSubmit={saveEditList}>
+                        <div className="switcher-edit-row">
+                          <input
+                            type="text"
+                            autoComplete="off"
+                            value={editListName}
+                            onChange={(e) => setEditListName(e.target.value)}
+                            autoFocus
+                          />
+                          <select
+                            value={editListType}
+                            onChange={(e) => setEditListType(e.target.value as ListType)}
+                          >
+                            {(Object.keys(LIST_TYPE_LABELS) as ListType[]).map((type) => (
+                              <option key={type} value={type}>
+                                {LIST_TYPE_LABELS[type]}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="switcher-edit-actions">
+                          <button type="button" className="cancel" onClick={cancelEditList}>
+                            Avbryt
+                          </button>
+                          <button type="submit" className="confirm" disabled={!editListName.trim()}>
+                            Lagre
+                          </button>
+                        </div>
+                      </form>
+                    ) : (
+                      <>
+                        <button
+                          type="button"
+                          className={`switcher-select ${l.id === activeList.id ? 'active' : ''}`}
+                          onClick={() => selectList(l.id)}
+                        >
+                          <span className="switcher-name">{l.name}</span>
+                          <span className="switcher-meta">
+                            <span className="switcher-type">{LIST_TYPE_LABELS[l.type]}</span>
+                            {updated && (
+                              <>
+                                <span className="switcher-dot">·</span>
+                                <span className="switcher-updated">{updated}</span>
+                              </>
+                            )}
+                          </span>
+                        </button>
+                        <div
+                          className="switcher-menu-wrap"
+                          ref={listMenuId === l.id ? listMenuRef : undefined}
+                        >
+                          <button
+                            type="button"
+                            className="switcher-menu-btn"
+                            aria-label={`Flere valg for ${l.name}`}
+                            aria-expanded={listMenuId === l.id}
+                            onClick={() => setListMenuId((v) => (v === l.id ? null : l.id))}
+                          >
+                            <svg viewBox="0 0 24 24" aria-hidden="true">
+                              <circle cx="12" cy="5" r="1.9" fill="currentColor" />
+                              <circle cx="12" cy="12" r="1.9" fill="currentColor" />
+                              <circle cx="12" cy="19" r="1.9" fill="currentColor" />
+                            </svg>
+                          </button>
+                          {listMenuId === l.id && (
+                            <div className="switcher-menu-dropdown">
+                              <button type="button" onClick={() => startEditList(l)}>
+                                Endre navn / type
+                              </button>
+                              <button type="button" className="danger" onClick={() => askDeleteList(l)}>
+                                Slett liste
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
                   </li>
                 )
               })}

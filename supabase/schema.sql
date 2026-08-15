@@ -21,7 +21,10 @@ create table if not exists items (
   added_by text check (added_by in ('Nora', 'Henning')),
   completed_at timestamptz,
   archived boolean not null default false,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- Manual sort order (todo-list drag reorder). New rows default to "now" in
+  -- epoch seconds so they land at the end without the app having to compute it.
+  position double precision not null default extract(epoch from clock_timestamp())
 );
 
 alter table lists enable row level security;
