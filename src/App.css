@@ -713,6 +713,21 @@
   transition: box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
+.list li.just-completed {
+  animation: completePulse 0.7s ease;
+}
+
+@keyframes completePulse {
+  0% {
+    background: var(--accent-bg);
+    box-shadow: 0 0 0 2px var(--accent-border);
+  }
+  100% {
+    background: var(--card);
+    box-shadow: var(--shadow-sm);
+  }
+}
+
 .list li.editing {
   align-items: flex-start;
 }

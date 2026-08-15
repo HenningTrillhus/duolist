@@ -469,6 +469,7 @@ function App() {
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
   const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set())
+  const [justCompletedIds, setJustCompletedIds] = useState<Set<string>>(new Set())
   const [scrolled, setScrolled] = useState(false)
 
   const [text, setText] = useState('')
@@ -912,6 +913,16 @@ function App() {
     const nextDone = !item.done
     const patch = { done: nextDone, completed_at: nextDone ? new Date().toISOString() : null }
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)))
+    if (nextDone) {
+      setJustCompletedIds((prev) => new Set(prev).add(item.id))
+      setTimeout(() => {
+        setJustCompletedIds((prev) => {
+          const next = new Set(prev)
+          next.delete(item.id)
+          return next
+        })
+      }, 700)
+    }
     const { error } = await supabase.from('items').update(patch).eq('id', item.id)
     if (error) {
       setItems((prev) =>
@@ -1469,6 +1480,7 @@ function App() {
       isRemoving ? 'removing' : '',
       editingId === item.id ? 'editing' : '',
       isDragging ? 'dragging' : '',
+      justCompletedIds.has(item.id) ? 'just-completed' : '',
     ]
       .filter(Boolean)
       .join(' ')
@@ -1487,8 +1499,8 @@ function App() {
           rotate: 0,
         }}
         transition={{
-          layout: { type: 'spring', stiffness: 420, damping: 34 },
-          default: { type: 'spring', stiffness: 480, damping: 30 },
+          layout: { type: 'spring', stiffness: 260, damping: 24, mass: 0.9 },
+          default: { type: 'spring', stiffness: 420, damping: 26 },
         }}
       >
         <button
