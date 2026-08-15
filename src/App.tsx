@@ -85,7 +85,7 @@ const COURSE_PLACEHOLDERS: Record<CourseKey, string> = {
 // direct equivalent, so it starts unfiltered.
 const COURSE_TYPE_FILTER: Record<CourseKey, string> = {
   main: 'Middag',
-  side: 'Siderett',
+  side: 'Tilbehør',
   starter: '',
   dessert: 'Dessert',
 }

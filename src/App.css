@@ -1316,15 +1316,15 @@ li.done .item-text {
 }
 
 .day-dinner-image-slot.split-2 {
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-rows: repeat(2, 1fr);
 }
 
 .day-dinner-image-slot.split-3 {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-rows: repeat(3, 1fr);
 }
 
 .day-dinner-image-slot.split-4 {
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-rows: repeat(4, 1fr);
 }
 
 .day-dinner-icon {
