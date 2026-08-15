@@ -297,6 +297,32 @@
   color: var(--accent);
 }
 
+.notif-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 4px;
+  padding: 10px;
+  border: none;
+  border-top: 1px solid var(--border);
+  border-radius: 10px;
+  background: transparent;
+  color: var(--text-h);
+  font-size: 15px;
+  text-align: left;
+}
+
+.notif-toggle svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+.notif-toggle:disabled {
+  opacity: 0.6;
+}
+
 .chevron {
   width: 18px;
   height: 18px;

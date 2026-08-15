@@ -92,3 +92,18 @@ create table if not exists dinners (
 alter table dinners enable row level security;
 create policy "anon full access" on dinners for all using (true) with check (true);
 alter publication supabase_realtime add table dinners;
+
+-- One row per browser/device that has enabled push notifications. A user can
+-- have several (phone + laptop); we push to all of them and prune ones the
+-- push service reports as gone (410/404) from the send-push edge function.
+create table if not exists push_subscriptions (
+  id uuid primary key default gen_random_uuid(),
+  user_name text not null check (user_name in ('Nora', 'Henning')),
+  endpoint text not null unique,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+
+alter table push_subscriptions enable row level security;
+create policy "anon full access" on push_subscriptions for all using (true) with check (true);

@@ -3,6 +3,14 @@ import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNo
 import { motion } from 'framer-motion'
 import { supabase } from './lib/supabase'
 import { minMunch } from './lib/minMunch'
+import {
+  disablePush,
+  enablePush,
+  getPushSubscription,
+  notifyOthers,
+  pushSupported,
+  registerServiceWorker,
+} from './lib/push'
 import './App.css'
 
 type Item = {
@@ -455,6 +463,8 @@ function App() {
   const userPanelRef = useRef<HTMLDivElement>(null)
 
   const [theme, setTheme] = useState<Theme>(loadTheme)
+  const [pushEnabled, setPushEnabled] = useState(false)
+  const [pushBusy, setPushBusy] = useState(false)
 
   const [activeTab, setActiveTab] = useState<AppTab>(() => {
     const stored = localStorage.getItem(TAB_KEY)
@@ -789,6 +799,19 @@ function App() {
   }, [theme])
 
   useEffect(() => {
+    if (!pushSupported) return
+    let cancelled = false
+    registerServiceWorker().then(() =>
+      getPushSubscription().then((sub) => {
+        if (!cancelled) setPushEnabled(!!sub)
+      }),
+    )
+    return () => {
+      cancelled = true
+    }
+  }, [])
+
+  useEffect(() => {
     localStorage.setItem(TAB_KEY, activeTab)
   }, [activeTab])
 
@@ -817,6 +840,20 @@ function App() {
     localStorage.setItem(USER_KEY, name)
     setCurrentUser(name)
     setUserMenuOpen(false)
+  }
+
+  const togglePush = async () => {
+    if (!currentUser || pushBusy) return
+    setPushBusy(true)
+    if (pushEnabled) {
+      await disablePush()
+      setPushEnabled(false)
+    } else {
+      const ok = await enablePush(currentUser)
+      setPushEnabled(ok)
+      if (!ok) setError('Kunne ikke skru på varsler. Sjekk at varsler er tillatt for appen.')
+    }
+    setPushBusy(false)
   }
 
   const uploadImage = async (file: File): Promise<string | null> => {
@@ -929,6 +966,13 @@ function App() {
       setError(error.message)
       setText(value)
       setQuantity(originalQuantity)
+    } else if (currentUser) {
+      notifyOthers({
+        excludeUser: currentUser,
+        title: activeList.name,
+        body: `${currentUser} la til «${value}»`,
+        url: '/',
+      })
     }
   }
 
@@ -1322,6 +1366,13 @@ function App() {
     if (error) {
       setDinners((prev) => prev.filter((d) => d.id !== optimisticId))
       setError(error.message)
+    } else if (currentUser) {
+      notifyOthers({
+        excludeUser: currentUser,
+        title: 'Middagsplanlegger',
+        body: `${currentUser} planla ${name} (${formatDayLabel(new Date(`${key}T00:00:00`)).toLowerCase()})`,
+        url: '/',
+      })
     }
   }
 
@@ -1927,6 +1978,22 @@ function App() {
           Mørk
         </button>
       </div>
+
+      {pushSupported && (
+        <button type="button" className="notif-toggle" onClick={togglePush} disabled={pushBusy}>
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <path
+              d="M6 17h12l-1.5-2.2V10a4.5 4.5 0 0 0-9 0v4.8L6 17Z"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.8"
+              strokeLinejoin="round"
+            />
+            <path d="M10 19.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
+          </svg>
+          Varsler: {pushEnabled ? 'På' : 'Av'}
+        </button>
+      )}
     </div>
   )
 
