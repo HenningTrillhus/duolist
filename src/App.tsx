@@ -225,6 +225,14 @@ function storeColorFor(stores: StoreOption[], name: string): string {
   return stores.find((s) => s.name === name)?.color ?? ''
 }
 
+// A hand-typed "Annet…" store name that happens to match a known store
+// (different case/spacing, e.g. "rema 1000") should join that store's
+// group and pick up its color, not create a second, uncoloured group.
+function normalizeCustomStore(stores: StoreOption[], name: string): string {
+  const match = stores.find((s) => s.name.toLowerCase() === name.toLowerCase())
+  return match?.name ?? name
+}
+
 function sortByPosition<T extends { position: number }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => a.position - b.position)
 }
@@ -476,6 +484,13 @@ function App() {
   )
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Live ref so async rollbacks (delete/clear-done that fail after an
+  // in-flight request) can tell whether the user has since switched lists,
+  // instead of re-inserting a stale item into whatever list is now active.
+  const activeIdRef = useRef<string | null>(activeId)
+  useEffect(() => {
+    activeIdRef.current = activeId
+  }, [activeId])
 
   const [currentUser, setCurrentUser] = useState<UserName | null>(() => {
     const stored = localStorage.getItem(USER_KEY)
@@ -547,6 +562,7 @@ function App() {
 
   const [draggingId, setDraggingId] = useState<string | null>(null)
   const itemListRef = useRef<HTMLUListElement | null>(null)
+  const completedFlagTimeoutsRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map())
 
   const [attachOpen, setAttachOpen] = useState(false)
   const [pendingImageFile, setPendingImageFile] = useState<File | null>(null)
@@ -566,6 +582,18 @@ function App() {
   const [editImageRemoved, setEditImageRemoved] = useState(false)
   const [editLink, setEditLink] = useState('')
   const [editNotify, setEditNotify] = useState(false)
+
+  // Kept in sync so the list-switch effect below can revoke whatever blob
+  // preview is currently staged without depending on it (which would re-run
+  // that effect, and reload the list, every time a preview changes).
+  const pendingImagePreviewRef = useRef<string | null>(null)
+  const editImagePreviewRef = useRef<string | null>(null)
+  useEffect(() => {
+    pendingImagePreviewRef.current = pendingImagePreview
+  }, [pendingImagePreview])
+  useEffect(() => {
+    editImagePreviewRef.current = editImageFile ? editImagePreview : null
+  }, [editImageFile, editImagePreview])
   const editFileInputRef = useRef<HTMLInputElement>(null)
 
   // Load lists once, seeding a default list on a brand new project.
@@ -683,10 +711,16 @@ function App() {
     setStoreChoice('')
     setCustomStore('')
     setAttachOpen(false)
+    if (pendingImagePreviewRef.current) URL.revokeObjectURL(pendingImagePreviewRef.current)
     setPendingImageFile(null)
     setPendingImagePreview(null)
     setPendingLink('')
     setPendingNotify(false)
+    if (editImagePreviewRef.current) URL.revokeObjectURL(editImagePreviewRef.current)
+    setEditingId(null)
+    setEditImageFile(null)
+    setEditImagePreview(null)
+    setEditImageRemoved(false)
 
     let cancelled = false
     supabase
@@ -715,6 +749,14 @@ function App() {
             if (row.archived) return
             setItems((prev) => (prev.some((i) => i.id === row.id) ? prev : sortByPosition([...prev, row])))
             setJustAddedIds((prev) => new Set(prev).add(row.id))
+            setTimeout(() => {
+              setJustAddedIds((prev) => {
+                if (!prev.has(row.id)) return prev
+                const next = new Set(prev)
+                next.delete(row.id)
+                return next
+              })
+            }, 1000)
           } else if (payload.eventType === 'UPDATE') {
             const row = payload.new as Item
             if (row.archived) {
@@ -785,9 +827,13 @@ function App() {
         }
       }
       setItems((prev) => {
-        const currentIndex = prev.findIndex((it) => it.id === draggedId)
+        // Splice against the same done-sunk order the <li> DOM reflects
+        // (sortDoneToBottom), not raw position order — otherwise the index
+        // read off the DOM points at a different item once anything's done.
+        const ordered = sortDoneToBottom(prev)
+        const currentIndex = ordered.findIndex((it) => it.id === draggedId)
         if (currentIndex === -1 || currentIndex === targetIndex) return prev
-        const next = [...prev]
+        const next = [...ordered]
         const [moved] = next.splice(currentIndex, 1)
         next.splice(targetIndex, 0, moved)
         return next
@@ -796,9 +842,17 @@ function App() {
     const onUp = () => {
       setDraggingId(null)
       setItems((prev) => {
-        const index = prev.findIndex((it) => it.id === draggedId)
-        if (index === -1) return prev
-        const newPosition = nextPositionFor(prev, index)
+        const ordered = sortDoneToBottom(prev)
+        const dragged = ordered.find((it) => it.id === draggedId)
+        if (!dragged) return prev
+        // Compute the midpoint against neighbours in the same done/active
+        // bucket only. A done neighbour's position reflects whenever it was
+        // completed, not its current (irrelevant-to-position) display slot —
+        // mixing buckets here can produce a value that, once the realtime
+        // echo re-sorts everything by raw position, snaps to the wrong spot.
+        const bucket = ordered.filter((it) => it.done === dragged.done)
+        const bucketIndex = bucket.findIndex((it) => it.id === draggedId)
+        const newPosition = nextPositionFor(bucket, bucketIndex)
         supabase
           .from('items')
           .update({ position: newPosition })
@@ -806,7 +860,7 @@ function App() {
           .then(({ error }) => {
             if (error) setError(error.message)
           })
-        return prev.map((it) => (it.id === draggedId ? { ...it, position: newPosition } : it))
+        return ordered.map((it) => (it.id === draggedId ? { ...it, position: newPosition } : it))
       })
     }
     window.addEventListener('pointermove', onMove)
@@ -904,6 +958,7 @@ function App() {
     e: ChangeEvent<HTMLInputElement>,
     setFile: (f: File | null) => void,
     setPreview: (u: string | null) => void,
+    currentPreview: string | null,
   ) => {
     const file = e.target.files?.[0] ?? null
     e.target.value = ''
@@ -916,6 +971,7 @@ function App() {
       setError('Bildet er for stort (maks 8 MB)')
       return
     }
+    if (currentPreview) URL.revokeObjectURL(currentPreview)
     setFile(file)
     setPreview(URL.createObjectURL(file))
   }
@@ -940,7 +996,12 @@ function App() {
     const parsedQuantity = Number(quantity)
     const hasQuantity = quantity.trim() !== '' && parsedQuantity > 0
     const originalQuantity = quantity
-    const finalStore = storeChoice === CUSTOM_STORE ? customStore.trim() || null : storeChoice || null
+    const finalStore =
+      storeChoice === CUSTOM_STORE
+        ? customStore.trim()
+          ? normalizeCustomStore(availableStores, customStore.trim())
+          : null
+        : storeChoice || null
     const finalLink = normalizeLink(pendingLink)
     const imageFile = pendingImageFile
     const localPreview = pendingImagePreview
@@ -965,6 +1026,14 @@ function App() {
     }
     setItems((prev) => sortByPosition([...prev, optimisticItem]))
     setJustAddedIds((prev) => new Set(prev).add(optimisticId))
+    setTimeout(() => {
+      setJustAddedIds((prev) => {
+        if (!prev.has(optimisticId)) return prev
+        const next = new Set(prev)
+        next.delete(optimisticId)
+        return next
+      })
+    }, 1000)
     setText('')
     setQuantity('')
     setCustomStore('')
@@ -986,6 +1055,7 @@ function App() {
         return
       }
       setItems((prev) => prev.map((i) => (i.id === optimisticId ? { ...i, image_url: finalImageUrl } : i)))
+      if (localPreview) URL.revokeObjectURL(localPreview)
     }
 
     const { error } = await supabase.from('items').insert({ ...optimisticItem, image_url: finalImageUrl })
@@ -1008,21 +1078,31 @@ function App() {
     const nextDone = !item.done
     const patch = { done: nextDone, completed_at: nextDone ? new Date().toISOString() : null }
     setItems((prev) => prev.map((i) => (i.id === item.id ? { ...i, ...patch } : i)))
+
+    const clearCompletedFlags = () => {
+      completedFlagTimeoutsRef.current.delete(item.id)
+      setJustCompletedIds((prev) => {
+        if (!prev.has(item.id)) return prev
+        const next = new Set(prev)
+        next.delete(item.id)
+        return next
+      })
+      setConfettiBursts((prev) => {
+        if (!prev.has(item.id)) return prev
+        const next = new Map(prev)
+        next.delete(item.id)
+        return next
+      })
+    }
+    const pendingClear = completedFlagTimeoutsRef.current.get(item.id)
+    if (pendingClear) clearTimeout(pendingClear)
     if (nextDone) {
       setJustCompletedIds((prev) => new Set(prev).add(item.id))
       setConfettiBursts((prev) => new Map(prev).set(item.id, makeConfetti()))
-      setTimeout(() => {
-        setJustCompletedIds((prev) => {
-          const next = new Set(prev)
-          next.delete(item.id)
-          return next
-        })
-        setConfettiBursts((prev) => {
-          const next = new Map(prev)
-          next.delete(item.id)
-          return next
-        })
-      }, 700)
+      completedFlagTimeoutsRef.current.set(item.id, setTimeout(clearCompletedFlags, 700))
+    } else {
+      completedFlagTimeoutsRef.current.delete(item.id)
+      clearCompletedFlags()
     }
     const { error } = await supabase.from('items').update(patch).eq('id', item.id)
     if (error) {
@@ -1040,14 +1120,14 @@ function App() {
     if (item.done) {
       const { error } = await supabase.from('items').update({ archived: true }).eq('id', item.id)
       if (error) {
-        setItems((prev) => sortByPosition([...prev, item]))
+        if (activeIdRef.current === item.list_id) setItems((prev) => sortByPosition([...prev, item]))
         setError(error.message)
       }
       return
     }
     const { error } = await supabase.from('items').delete().eq('id', item.id)
     if (error) {
-      setItems((prev) => sortByPosition([...prev, item]))
+      if (activeIdRef.current === item.list_id) setItems((prev) => sortByPosition([...prev, item]))
       setError(error.message)
       return
     }
@@ -1058,9 +1138,9 @@ function App() {
     if (doneItems.length === 0) return
     const doneIds = doneItems.map((i) => i.id)
     setItems((prev) => prev.filter((i) => !doneIds.includes(i.id)))
-    const { error } = await supabase.from('items').update({ archived: true }).in('id', doneIds)
+    const { error } = await supabase.from('items').update({ archived: true }).in('id', doneIds).eq('done', true)
     if (error) {
-      setItems((prev) => sortByPosition([...prev, ...doneItems]))
+      if (activeIdRef.current === doneItems[0]?.list_id) setItems((prev) => sortByPosition([...prev, ...doneItems]))
       setError(error.message)
     }
   }
@@ -1222,7 +1302,12 @@ function App() {
     if (!value) return
     const parsedQuantity = Number(editQuantity)
     const hasQuantity = editQuantity.trim() !== '' && parsedQuantity > 0
-    const finalStore = editStoreChoice === CUSTOM_STORE ? editCustomStore.trim() || null : editStoreChoice || null
+    const finalStore =
+      editStoreChoice === CUSTOM_STORE
+        ? editCustomStore.trim()
+          ? normalizeCustomStore(availableStores, editCustomStore.trim())
+          : null
+        : editStoreChoice || null
     const finalLink = normalizeLink(editLink)
     const shouldNotify = editNotify
     const previous = items.find((i) => i.id === editingId)
@@ -1252,6 +1337,7 @@ function App() {
       finalImageUrl = uploaded
       setItems((prev) => prev.map((i) => (i.id === previous.id ? { ...i, image_url: uploaded } : i)))
       deleteStoredImage(previous.image_url)
+      if (optimisticImageUrl) URL.revokeObjectURL(optimisticImageUrl)
     } else if (editImageRemoved) {
       deleteStoredImage(previous.image_url)
     }
@@ -1498,7 +1584,7 @@ function App() {
           {link ? (
             <div className="recipe-chip">
               {link.image_url ? (
-                <img src={link.image_url} alt="" />
+                <img src={link.image_url} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
               ) : (
                 <span className="recipe-chip-icon" aria-hidden="true">
                   🍽️
@@ -1671,7 +1757,7 @@ function App() {
                 type="file"
                 accept="image/*"
                 style={{ display: 'none' }}
-                onChange={(e) => handleImagePick(e, setEditImageFile, setEditImagePreview)}
+                onChange={(e) => handleImagePick(e, setEditImageFile, setEditImagePreview, editImageFile ? editImagePreview : null)}
               />
               {editImagePreview ? (
                 <div className="attach-image-preview edit-image-preview">
@@ -1807,7 +1893,14 @@ function App() {
         ) : (
           <>
             <button type="button" className="item-main" onClick={() => startEdit(item)}>
-              {item.image_url && <img className="item-thumb" src={item.image_url} alt="" />}
+              {item.image_url && (
+                <img
+                  className="item-thumb"
+                  src={item.image_url}
+                  alt=""
+                  onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
+                />
+              )}
               <span className="item-text">{item.text}</span>
               {item.link_url && (
                 <svg className="item-link-icon" viewBox="0 0 24 24" aria-hidden="true">
@@ -2345,7 +2438,7 @@ function App() {
               type="file"
               accept="image/*"
               style={{ display: 'none' }}
-              onChange={(e) => handleImagePick(e, setPendingImageFile, setPendingImagePreview)}
+              onChange={(e) => handleImagePick(e, setPendingImageFile, setPendingImagePreview, pendingImagePreview)}
             />
             {pendingImagePreview ? (
               <div className="attach-image-preview">
@@ -2440,7 +2533,12 @@ function App() {
                           return (
                             <div className={`day-dinner-image-slot split-${images.length}`}>
                               {images.map((url, i) => (
-                                <img key={i} src={url} alt="" />
+                                <img
+                                  key={i}
+                                  src={url}
+                                  alt=""
+                                  onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
+                                />
                               ))}
                             </div>
                           )
@@ -2707,7 +2805,7 @@ function App() {
                             <button type="button" className="recipe-picker-row" onClick={() => pickRecipe(r)}>
                               <div className="recipe-picker-thumb">
                                 {r.image_url ? (
-                                  <img src={r.image_url} alt="" />
+                                  <img src={r.image_url} alt="" onError={(e) => { e.currentTarget.style.visibility = 'hidden' }} />
                                 ) : (
                                   <span aria-hidden="true">🍽️</span>
                                 )}
