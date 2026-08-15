@@ -512,6 +512,7 @@ function App() {
   const [dinnerStarterInput, setDinnerStarterInput] = useState('')
   const [dinnerDessertInput, setDinnerDessertInput] = useState('')
   const [dinnerRecipeLinks, setDinnerRecipeLinks] = useState<RecipeLinks>({})
+  const [dinnerNotify, setDinnerNotify] = useState(false)
   const dayStripRef = useRef<HTMLDivElement | null>(null)
 
   const [recipePickerCourse, setRecipePickerCourse] = useState<CourseKey | null>(null)
@@ -1343,6 +1344,7 @@ function App() {
     setDinnerStarterInput(existing?.starter ?? '')
     setDinnerDessertInput(existing?.dessert ?? '')
     setDinnerRecipeLinks(existing?.recipe_links ?? {})
+    setDinnerNotify(false)
   }
 
   const closeDinnerEditor = () => setDinnerEditorDate(null)
@@ -1359,6 +1361,7 @@ function App() {
     const recipe_links = dinnerRecipeLinks
     const imageUrl = recipe_links.main?.image_url ?? null
     const existing = dinners.find((d) => d.date === key)
+    const shouldNotify = dinnerNotify
     closeDinnerEditor()
 
     if (existing) {
@@ -1369,13 +1372,12 @@ function App() {
       if (error) {
         setDinners((prev) => prev.map((d) => (d.id === previous.id ? previous : d)))
         setError(error.message)
-      } else if (currentUser && name !== previous.name) {
-        notifyOthers({
-          excludeUser: currentUser,
-          title: 'Middagsplanlegger',
-          body: `${currentUser} endret «${previous.name}» til «${name}»`,
-          url: '/',
-        })
+      } else if (currentUser && shouldNotify) {
+        const body =
+          name !== previous.name
+            ? `${currentUser} endret «${previous.name}» til «${name}»`
+            : `${currentUser} endret ${name} (${formatDayLabel(new Date(`${key}T00:00:00`)).toLowerCase()})`
+        notifyOthers({ excludeUser: currentUser, title: 'Middagsplanlegger', body, url: '/' })
       }
       return
     }
@@ -1408,7 +1410,7 @@ function App() {
     if (error) {
       setDinners((prev) => prev.filter((d) => d.id !== optimisticId))
       setError(error.message)
-    } else if (currentUser) {
+    } else if (currentUser && shouldNotify) {
       notifyOthers({
         excludeUser: currentUser,
         title: 'Middagsplanlegger',
@@ -2644,6 +2646,8 @@ function App() {
                 <button type="submit" className="confirm" disabled={!dinnerNameInput.trim()}>
                   Lagre
                 </button>
+                {pushSupported &&
+                  notifyStarButton(dinnerNotify, () => setDinnerNotify((v) => !v), 'Varsle den andre om denne middagen')}
               </div>
             </form>
           </div>
