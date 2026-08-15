@@ -240,6 +240,28 @@ type ConfettiPiece = {
 
 const CONFETTI_COLORS = ['#ff4d6d', '#ffd60a', '#06d6a0', '#4cc9f0', '#b388ff', '#ff9f1c', '#f72585']
 
+function notifyStarButton(active: boolean, onToggle: () => void, label: string): ReactNode {
+  return (
+    <button
+      type="button"
+      className={`notify-star ${active ? 'active' : ''}`}
+      onClick={onToggle}
+      aria-pressed={active}
+      aria-label={label}
+    >
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <path
+          d="M12 3.5l2.47 5.06 5.58.62-4.13 3.82 1.1 5.5L12 15.9l-5.02 2.6 1.1-5.5-4.13-3.82 5.58-.62L12 3.5Z"
+          fill={active ? 'currentColor' : 'none'}
+          stroke="currentColor"
+          strokeWidth="1.6"
+          strokeLinejoin="round"
+        />
+      </svg>
+    </button>
+  )
+}
+
 function makeConfetti(): ConfettiPiece[] {
   return Array.from({ length: 12 }, (_, i) => ({
     id: i,
@@ -1716,35 +1738,6 @@ function App() {
                 </a>
               )}
             </div>
-            {pushSupported && (
-              <div className="attach-notify-row">
-                <button
-                  type="button"
-                  className={`bell-checkbox ${editNotify ? 'active' : ''}`}
-                  onClick={() => setEditNotify((v) => !v)}
-                  aria-pressed={editNotify}
-                  aria-label="Varsle den andre om denne endringen"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M6 17h12l-1.5-2.2V10a4.5 4.5 0 0 0-9 0v4.8L6 17Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M10 19.5a2 2 0 0 0 4 0"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </button>
-                <span>Varsle om denne endringen</span>
-              </div>
-            )}
             <div className="edit-form-row">
               <input
                 type="text"
@@ -1753,6 +1746,7 @@ function App() {
                 onChange={(e) => setEditText(e.target.value)}
                 autoFocus
               />
+              {pushSupported && notifyStarButton(editNotify, () => setEditNotify((v) => !v), 'Varsle den andre om denne endringen')}
               <button type="submit" className="save" aria-label="Lagre" disabled={!editText.trim()}>
                 ✓
               </button>
@@ -2283,9 +2277,12 @@ function App() {
             </svg>
           </button>
           {activeList.type === 'todo' && (
-            <button type="submit" aria-label="Legg til" disabled={!text.trim()}>
-              +
-            </button>
+            <>
+              {pushSupported && notifyStarButton(pendingNotify, () => setPendingNotify((v) => !v), 'Varsle den andre om denne varen')}
+              <button type="submit" aria-label="Legg til" disabled={!text.trim()}>
+                +
+              </button>
+            </>
           )}
         </div>
         {activeList.type !== 'todo' && (
@@ -2311,6 +2308,7 @@ function App() {
                 </option>
               ))}
             </select>
+            {pushSupported && notifyStarButton(pendingNotify, () => setPendingNotify((v) => !v), 'Varsle den andre om denne varen')}
             <button type="submit" aria-label="Legg til" disabled={!text.trim()}>
               +
             </button>
@@ -2396,35 +2394,6 @@ function App() {
                 onChange={(e) => setPendingLink(e.target.value)}
               />
             </div>
-            {pushSupported && (
-              <div className="attach-notify-row">
-                <button
-                  type="button"
-                  className={`bell-checkbox ${pendingNotify ? 'active' : ''}`}
-                  onClick={() => setPendingNotify((v) => !v)}
-                  aria-pressed={pendingNotify}
-                  aria-label="Varsle den andre om denne varen"
-                >
-                  <svg viewBox="0 0 24 24" aria-hidden="true">
-                    <path
-                      d="M6 17h12l-1.5-2.2V10a4.5 4.5 0 0 0-9 0v4.8L6 17Z"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinejoin="round"
-                    />
-                    <path
-                      d="M10 19.5a2 2 0 0 0 4 0"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="1.8"
-                      strokeLinecap="round"
-                    />
-                  </svg>
-                </button>
-                <span>Varsle om denne</span>
-              </div>
-            )}
           </div>
         )}
       </form>
