@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent, FormEvent, PointerEvent as ReactPointerEvent, ReactNode, UIEvent } from 'react'
+import { motion } from 'framer-motion'
 import { supabase } from './lib/supabase'
 import { minMunch } from './lib/minMunch'
 import './App.css'
@@ -218,6 +219,17 @@ function storeColorFor(stores: StoreOption[], name: string): string {
 
 function sortByPosition<T extends { position: number }>(rows: T[]): T[] {
   return [...rows].sort((a, b) => a.position - b.position)
+}
+
+// Checked-off items sink to the bottom of their list/store-group, most
+// recently completed last, so ticking something off always sends it further
+// down rather than dropping it wherever its original position happened to be.
+function sortDoneToBottom(items: Item[]): Item[] {
+  const active = items.filter((i) => !i.done)
+  const done = items
+    .filter((i) => i.done)
+    .sort((a, b) => (a.completed_at ?? '').localeCompare(b.completed_at ?? ''))
+  return [...active, ...done]
 }
 
 function nextPositionFor(list: Item[], index: number): number {
@@ -456,6 +468,7 @@ function App() {
   const [recipeTypeFilter, setRecipeTypeFilter] = useState('')
 
   const [removingIds, setRemovingIds] = useState<Set<string>>(new Set())
+  const [justAddedIds, setJustAddedIds] = useState<Set<string>>(new Set())
   const [scrolled, setScrolled] = useState(false)
 
   const [text, setText] = useState('')
@@ -641,6 +654,7 @@ function App() {
             const row = payload.new as Item
             if (row.archived) return
             setItems((prev) => (prev.some((i) => i.id === row.id) ? prev : sortByPosition([...prev, row])))
+            setJustAddedIds((prev) => new Set(prev).add(row.id))
           } else if (payload.eventType === 'UPDATE') {
             const row = payload.new as Item
             if (row.archived) {
@@ -862,6 +876,7 @@ function App() {
       position: Date.now() / 1000,
     }
     setItems((prev) => sortByPosition([...prev, optimisticItem]))
+    setJustAddedIds((prev) => new Set(prev).add(optimisticId))
     setText('')
     setQuantity('')
     setCustomStore('')
@@ -1447,16 +1462,35 @@ function App() {
   const renderItem = (item: Item) => {
     const owner = item.added_by
     const style = owner ? { borderLeftColor: USER_COLORS[owner].accent } : undefined
+    const isRemoving = removingIds.has(item.id)
+    const isDragging = draggingId === item.id
     const classes = [
       item.done ? 'done' : '',
-      removingIds.has(item.id) ? 'removing' : '',
+      isRemoving ? 'removing' : '',
       editingId === item.id ? 'editing' : '',
-      draggingId === item.id ? 'dragging' : '',
+      isDragging ? 'dragging' : '',
     ]
       .filter(Boolean)
       .join(' ')
     return (
-      <li key={item.id} data-item-id={item.id} className={classes} style={style}>
+      <motion.li
+        key={item.id}
+        data-item-id={item.id}
+        className={classes}
+        style={style}
+        layout="position"
+        initial={justAddedIds.has(item.id) ? { opacity: 0, y: -16, scale: 0.9, rotate: -1.5 } : false}
+        animate={{
+          opacity: isRemoving ? 0 : 1,
+          scale: isRemoving ? 0.94 : isDragging ? 1.03 : 1,
+          y: 0,
+          rotate: 0,
+        }}
+        transition={{
+          layout: { type: 'spring', stiffness: 420, damping: 34 },
+          default: { type: 'spring', stiffness: 480, damping: 30 },
+        }}
+      >
         <button
           type="button"
           className={`checkbox ${isTodoList ? 'checkbox-priority' : ''}`}
@@ -1670,9 +1704,11 @@ function App() {
             </button>
           </>
         )}
-      </li>
+      </motion.li>
     )
   }
+
+  const displayItems = sortDoneToBottom(items)
 
   let listContent: ReactNode = null
   if (activeList) {
@@ -1681,13 +1717,13 @@ function App() {
     } else if (activeList.type === 'todo') {
       listContent = (
         <ul ref={itemListRef} className={draggingId ? 'dragging-active' : ''}>
-          {items.map(renderItem)}
+          {displayItems.map(renderItem)}
         </ul>
       )
     } else {
-      const groups = groupByStore(items, availableStores)
+      const groups = groupByStore(displayItems, availableStores)
       if (groups.length === 1 && groups[0].store === null) {
-        listContent = <ul>{items.map(renderItem)}</ul>
+        listContent = <ul>{displayItems.map(renderItem)}</ul>
       } else {
         listContent = (
           <>

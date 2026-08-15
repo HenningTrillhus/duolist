@@ -710,8 +710,7 @@
   min-height: 52px;
   border-left: 4px solid transparent;
   box-shadow: var(--shadow-sm);
-  animation: itemEnter 0.22s ease;
-  transition: opacity 0.18s ease, transform 0.18s ease, box-shadow 0.2s ease, background-color 0.2s ease;
+  transition: box-shadow 0.2s ease, background-color 0.2s ease;
 }
 
 .list li.editing {
@@ -747,11 +746,6 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-}
-
-.list li.removing {
-  opacity: 0;
-  transform: scale(0.94);
 }
 
 .checkbox {
@@ -812,14 +806,9 @@ li.done .checkbox {
 }
 
 .list li.dragging {
-  opacity: 0.85;
   box-shadow: var(--shadow-md);
   position: relative;
   z-index: 5;
-}
-
-ul.dragging-active li:not(.dragging) {
-  transition: transform 0.15s ease;
 }
 
 .item-main {
