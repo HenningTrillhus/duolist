@@ -297,29 +297,48 @@
   color: var(--accent);
 }
 
-.notif-toggle {
+.notif-row {
   display: flex;
   align-items: center;
-  gap: 10px;
-  width: 100%;
+  justify-content: space-between;
   margin-top: 4px;
-  padding: 10px;
-  border: none;
+  padding: 10px 8px 8px;
   border-top: 1px solid var(--border);
-  border-radius: 10px;
-  background: transparent;
-  color: var(--text-h);
+}
+
+.notif-label {
   font-size: 15px;
-  text-align: left;
+  color: var(--text-h);
 }
 
-.notif-toggle svg {
-  width: 18px;
-  height: 18px;
+.bell-checkbox {
   flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border-radius: 50%;
+  border: 2px solid var(--accent-border);
+  background: transparent;
+  color: var(--text);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background-color 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease, color 0.15s ease;
 }
 
-.notif-toggle:disabled {
+.bell-checkbox svg {
+  width: 17px;
+  height: 17px;
+}
+
+.bell-checkbox.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  box-shadow: 0 0 0 4px var(--accent-bg);
+}
+
+.bell-checkbox:disabled {
   opacity: 0.6;
 }
 

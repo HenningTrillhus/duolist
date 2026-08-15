@@ -1233,6 +1233,13 @@ function App() {
     if (error) {
       setItems((prev) => prev.map((i) => (i.id === previous.id ? previous : i)))
       setError(error.message)
+    } else if (currentUser && activeList && value !== previous.text) {
+      notifyOthers({
+        excludeUser: currentUser,
+        title: activeList.name,
+        body: `${currentUser} endret «${previous.text}» til «${value}»`,
+        url: '/',
+      })
     }
   }
 
@@ -1334,6 +1341,13 @@ function App() {
       if (error) {
         setDinners((prev) => prev.map((d) => (d.id === previous.id ? previous : d)))
         setError(error.message)
+      } else if (currentUser && name !== previous.name) {
+        notifyOthers({
+          excludeUser: currentUser,
+          title: 'Middagsplanlegger',
+          body: `${currentUser} endret «${previous.name}» til «${name}»`,
+          url: '/',
+        })
       }
       return
     }
@@ -1980,19 +1994,34 @@ function App() {
       </div>
 
       {pushSupported && (
-        <button type="button" className="notif-toggle" onClick={togglePush} disabled={pushBusy}>
-          <svg viewBox="0 0 24 24" aria-hidden="true">
-            <path
-              d="M6 17h12l-1.5-2.2V10a4.5 4.5 0 0 0-9 0v4.8L6 17Z"
-              fill="none"
-              stroke="currentColor"
-              strokeWidth="1.8"
-              strokeLinejoin="round"
-            />
-            <path d="M10 19.5a2 2 0 0 0 4 0" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" />
-          </svg>
-          Varsler: {pushEnabled ? 'På' : 'Av'}
-        </button>
+        <div className="notif-row">
+          <span className="notif-label">Varsler</span>
+          <button
+            type="button"
+            className={`bell-checkbox ${pushEnabled ? 'active' : ''}`}
+            onClick={togglePush}
+            disabled={pushBusy}
+            aria-pressed={pushEnabled}
+            aria-label={pushEnabled ? 'Skru av varsler' : 'Skru på varsler'}
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <path
+                d="M6 17h12l-1.5-2.2V10a4.5 4.5 0 0 0-9 0v4.8L6 17Z"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinejoin="round"
+              />
+              <path
+                d="M10 19.5a2 2 0 0 0 4 0"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+              />
+            </svg>
+          </button>
+        </div>
       )}
     </div>
   )
