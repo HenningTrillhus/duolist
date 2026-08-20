@@ -1624,7 +1624,12 @@ function App() {
       return
     }
     if (text || imageUrl) {
-      supabase.from('isopod_wish_history').insert({ text, image_url: imageUrl, added_by: currentUser })
+      supabase
+        .from('isopod_wish_history')
+        .insert({ text, image_url: imageUrl, added_by: currentUser })
+        .then(({ error: historyError }) => {
+          if (historyError) setError(historyError.message)
+        })
       notifyOthers({
         excludeUser: currentUser,
         title: 'Isopod',
