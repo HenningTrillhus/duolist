@@ -1467,6 +1467,101 @@ li.done .item-text {
   padding: 0;
 }
 
+.isopod-tab {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.isopod-frame {
+  position: relative;
+  width: min(78vw, 300px);
+}
+
+.isopod-image {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 12px;
+}
+
+.isopod-bubble-overlay {
+  position: absolute;
+  left: 51%;
+  top: 32%;
+  transform: translate(-50%, -50%);
+  width: 62%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+}
+
+.isopod-wish-text {
+  border: none;
+  background: transparent;
+  color: #1a1a1a;
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.25;
+  padding: 0;
+  word-break: break-word;
+}
+
+.isopod-add-btn {
+  width: 40px;
+  height: 40px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 24px;
+  line-height: 1;
+  padding: 0;
+  box-shadow: var(--shadow-sm);
+}
+
+.isopod-wish-form {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: 100%;
+}
+
+.isopod-wish-form input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  font-size: 13px;
+  border: none;
+  border-bottom: 1.5px solid #1a1a1a;
+  background: transparent;
+  color: #1a1a1a;
+  padding: 2px 2px;
+  text-align: center;
+}
+
+.isopod-wish-form input::placeholder {
+  color: rgba(26, 26, 26, 0.5);
+}
+
+.isopod-wish-form button[type='submit'] {
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  border: none;
+  background: var(--accent);
+  color: #fff;
+  font-size: 13px;
+  padding: 0;
+}
+
+.isopod-wish-form button[type='submit']:disabled {
+  opacity: 0.4;
+}
+
 .day-strip {
   flex: 1;
   display: flex;

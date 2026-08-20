@@ -107,3 +107,20 @@ create table if not exists push_subscriptions (
 
 alter table push_subscriptions enable row level security;
 create policy "anon full access" on push_subscriptions for all using (true) with check (true);
+
+-- Single shared row (id is always 1) holding the current "isopod wish" shown
+-- in the speech bubble on the Isopod tab. Nullable text = bubble is empty.
+create table if not exists isopod_wish (
+  id int primary key default 1,
+  text text,
+  added_by text check (added_by in ('Nora', 'Henning')),
+  updated_at timestamptz not null default now(),
+  constraint isopod_wish_single_row check (id = 1)
+);
+
+insert into isopod_wish (id, text) values (1, null)
+on conflict (id) do nothing;
+
+alter table isopod_wish enable row level security;
+create policy "anon full access" on isopod_wish for all using (true) with check (true);
+alter publication supabase_realtime add table isopod_wish;

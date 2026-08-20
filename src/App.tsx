@@ -148,7 +148,14 @@ const TAB_KEY = 'duolist-tab'
 const REMOVE_ANIM_MS = 180
 
 type Theme = 'light' | 'dark'
-type AppTab = 'liste' | 'middag'
+type AppTab = 'liste' | 'middag' | 'isopod'
+
+type IsopodWish = {
+  id: number
+  text: string | null
+  added_by: UserName | null
+  updated_at: string
+}
 
 const USERS: UserName[] = ['Nora', 'Henning']
 
@@ -519,6 +526,9 @@ function App() {
   const [historyError, setHistoryError] = useState<string | null>(null)
 
   const [dinners, setDinners] = useState<Dinner[]>([])
+  const [isopodWish, setIsopodWish] = useState<IsopodWish | null>(null)
+  const [isopodAdding, setIsopodAdding] = useState(false)
+  const [isopodInput, setIsopodInput] = useState('')
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => startOfMonth(new Date()))
   const [dinnerEditorDate, setDinnerEditorDate] = useState<string | null>(null)
@@ -667,6 +677,41 @@ function App() {
             const row = payload.old as Dinner
             setDinners((prev) => prev.filter((d) => d.id !== row.id))
           }
+        },
+      )
+      .subscribe()
+
+    return () => {
+      cancelled = true
+      supabase.removeChannel(channel)
+    }
+  }, [])
+
+  // Load the single shared isopod wish row and keep it in sync in real time.
+  useEffect(() => {
+    let cancelled = false
+    supabase
+      .from('isopod_wish')
+      .select('*')
+      .eq('id', 1)
+      .maybeSingle()
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) {
+          setError(error.message)
+          return
+        }
+        setIsopodWish(data)
+      })
+
+    const channel = supabase
+      .channel('isopod-wish-changes')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'isopod_wish' },
+        (payload) => {
+          if (payload.eventType === 'DELETE') return
+          setIsopodWish(payload.new as IsopodWish)
         },
       )
       .subscribe()
@@ -1504,6 +1549,38 @@ function App() {
         url: '/',
       })
     }
+  }
+
+  const submitIsopodWish = async (e: FormEvent) => {
+    e.preventDefault()
+    const text = isopodInput.trim()
+    if (!text || !currentUser) return
+    setIsopodAdding(false)
+    setIsopodInput('')
+    setIsopodWish({ id: 1, text, added_by: currentUser, updated_at: new Date().toISOString() })
+    const { error } = await supabase
+      .from('isopod_wish')
+      .update({ text, added_by: currentUser, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+    if (error) {
+      setError(error.message)
+      return
+    }
+    notifyOthers({
+      excludeUser: currentUser,
+      title: 'Isopod',
+      body: `!isopod har lyst på ${text}!`,
+      url: '/',
+    })
+  }
+
+  const clearIsopodWish = async () => {
+    setIsopodWish((prev) => (prev ? { ...prev, text: null, added_by: null } : prev))
+    const { error } = await supabase
+      .from('isopod_wish')
+      .update({ text: null, added_by: null, updated_at: new Date().toISOString() })
+      .eq('id', 1)
+    if (error) setError(error.message)
   }
 
   const ensureRecipesLoaded = async () => {
@@ -2574,6 +2651,44 @@ function App() {
         </div>
       )}
 
+      {activeTab === 'isopod' && (
+        <div className="tab-view isopod-tab" key="isopod">
+          <div className="isopod-frame">
+            <img src="/isopod.jpg" alt="Isopod" className="isopod-image" />
+            <div className="isopod-bubble-overlay">
+              {isopodWish?.text ? (
+                <button type="button" className="isopod-wish-text" onClick={clearIsopodWish}>
+                  {isopodWish.text}
+                </button>
+              ) : isopodAdding ? (
+                <form className="isopod-wish-form" onSubmit={submitIsopodWish}>
+                  <input
+                    type="text"
+                    autoComplete="off"
+                    placeholder="hva har isopod lyst på?"
+                    value={isopodInput}
+                    onChange={(e) => setIsopodInput(e.target.value)}
+                    autoFocus
+                  />
+                  <button type="submit" aria-label="Legg til" disabled={!isopodInput.trim()}>
+                    ✓
+                  </button>
+                </form>
+              ) : (
+                <button
+                  type="button"
+                  className="isopod-add-btn"
+                  onClick={() => setIsopodAdding(true)}
+                  aria-label="Legg til isopod-ønske"
+                >
+                  +
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       <nav className="tab-bar">
         <button
           type="button"
@@ -2616,6 +2731,25 @@ function App() {
             />
           </svg>
           <span>Middag</span>
+        </button>
+        <button
+          type="button"
+          className={activeTab === 'isopod' ? 'active' : ''}
+          onClick={() => setActiveTab('isopod')}
+          aria-current={activeTab === 'isopod'}
+        >
+          <svg viewBox="0 0 24 24" aria-hidden="true">
+            <ellipse cx="12" cy="13" rx="8" ry="6" fill="none" stroke="currentColor" strokeWidth="2" />
+            <path
+              d="M6 10v6M9.5 8.5v9M12.5 8v10M15.5 8.5v9M19 10v6"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="1.5"
+              strokeLinecap="round"
+            />
+            <path d="M8 8 6.5 6M16 8l1.5-2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+          </svg>
+          <span>Isopod</span>
         </button>
       </nav>
 
