@@ -153,8 +153,17 @@ type AppTab = 'liste' | 'middag' | 'isopod'
 type IsopodWish = {
   id: number
   text: string | null
+  image_url: string | null
   added_by: UserName | null
   updated_at: string
+}
+
+type IsopodHistoryEntry = {
+  id: string
+  text: string | null
+  image_url: string | null
+  added_by: UserName | null
+  created_at: string
 }
 
 const USERS: UserName[] = ['Nora', 'Henning']
@@ -527,8 +536,16 @@ function App() {
 
   const [dinners, setDinners] = useState<Dinner[]>([])
   const [isopodWish, setIsopodWish] = useState<IsopodWish | null>(null)
-  const [isopodAdding, setIsopodAdding] = useState(false)
-  const [isopodInput, setIsopodInput] = useState('')
+  const [isopodEditing, setIsopodEditing] = useState(false)
+  const [isopodEditText, setIsopodEditText] = useState('')
+  const [isopodEditImageFile, setIsopodEditImageFile] = useState<File | null>(null)
+  const [isopodEditImagePreview, setIsopodEditImagePreview] = useState<string | null>(null)
+  const [isopodEditImageRemoved, setIsopodEditImageRemoved] = useState(false)
+  const isopodFileInputRef = useRef<HTMLInputElement>(null)
+  const [isopodHistoryOpen, setIsopodHistoryOpen] = useState(false)
+  const [isopodHistoryEntries, setIsopodHistoryEntries] = useState<IsopodHistoryEntry[] | null>(null)
+  const [isopodHistoryLoading, setIsopodHistoryLoading] = useState(false)
+  const [isopodHistoryError, setIsopodHistoryError] = useState<string | null>(null)
   const [calendarOpen, setCalendarOpen] = useState(false)
   const [calendarMonth, setCalendarMonth] = useState<Date>(() => startOfMonth(new Date()))
   const [dinnerEditorDate, setDinnerEditorDate] = useState<string | null>(null)
@@ -938,6 +955,14 @@ function App() {
 
   useEffect(() => {
     localStorage.setItem(TAB_KEY, activeTab)
+  }, [activeTab])
+
+  // Leaving the isopod tab mid-edit shouldn't leak a staged blob preview.
+  useEffect(() => {
+    return () => {
+      if (isopodEditImageFile && isopodEditImagePreview) URL.revokeObjectURL(isopodEditImagePreview)
+      setIsopodEditing(false)
+    }
   }, [activeTab])
 
   useEffect(() => {
@@ -1551,36 +1576,79 @@ function App() {
     }
   }
 
+  const startIsopodEdit = () => {
+    setIsopodEditText(isopodWish?.text ?? '')
+    setIsopodEditImageFile(null)
+    setIsopodEditImagePreview(isopodWish?.image_url ?? null)
+    setIsopodEditImageRemoved(false)
+    setIsopodEditing(true)
+  }
+
+  const cancelIsopodEdit = () => {
+    if (isopodEditImageFile && isopodEditImagePreview) URL.revokeObjectURL(isopodEditImagePreview)
+    setIsopodEditing(false)
+  }
+
+  const removeIsopodEditImage = () => {
+    if (isopodEditImageFile && isopodEditImagePreview) URL.revokeObjectURL(isopodEditImagePreview)
+    setIsopodEditImageFile(null)
+    setIsopodEditImagePreview(null)
+    setIsopodEditImageRemoved(true)
+  }
+
   const submitIsopodWish = async (e: FormEvent) => {
     e.preventDefault()
-    const text = isopodInput.trim()
-    if (!text || !currentUser) return
-    setIsopodAdding(false)
-    setIsopodInput('')
-    setIsopodWish({ id: 1, text, added_by: currentUser, updated_at: new Date().toISOString() })
-    const { error } = await supabase
-      .from('isopod_wish')
-      .update({ text, added_by: currentUser, updated_at: new Date().toISOString() })
-      .eq('id', 1)
+    if (!currentUser) return
+    const text = isopodEditText.trim() || null
+    const newFile = isopodEditImageFile
+    const localPreview = isopodEditImagePreview
+    const previousImageUrl = isopodWish?.image_url ?? null
+    setIsopodEditing(false)
+
+    let imageUrl = isopodEditImageRemoved ? null : previousImageUrl
+    if (newFile) {
+      const uploaded = await uploadImage(newFile)
+      if (!uploaded) return
+      imageUrl = uploaded
+      if (localPreview) URL.revokeObjectURL(localPreview)
+      if (previousImageUrl) deleteStoredImage(previousImageUrl)
+    } else if (isopodEditImageRemoved && previousImageUrl) {
+      deleteStoredImage(previousImageUrl)
+    }
+
+    const updated = { text, image_url: imageUrl, added_by: currentUser, updated_at: new Date().toISOString() }
+    setIsopodWish({ id: 1, ...updated })
+    const { error } = await supabase.from('isopod_wish').update(updated).eq('id', 1)
     if (error) {
       setError(error.message)
       return
     }
-    notifyOthers({
-      excludeUser: currentUser,
-      title: 'Isopod',
-      body: `!isopod har lyst på ${text}!`,
-      url: '/',
-    })
+    if (text || imageUrl) {
+      supabase.from('isopod_wish_history').insert({ text, image_url: imageUrl, added_by: currentUser })
+      notifyOthers({
+        excludeUser: currentUser,
+        title: 'Isopod',
+        body: text ? `!isopod har lyst på ${text}!` : '!isopod er keen!',
+        url: '/',
+      })
+    }
   }
 
-  const clearIsopodWish = async () => {
-    setIsopodWish((prev) => (prev ? { ...prev, text: null, added_by: null } : prev))
-    const { error } = await supabase
-      .from('isopod_wish')
-      .update({ text: null, added_by: null, updated_at: new Date().toISOString() })
-      .eq('id', 1)
-    if (error) setError(error.message)
+  const openIsopodHistory = async () => {
+    setIsopodHistoryOpen(true)
+    setIsopodHistoryLoading(true)
+    setIsopodHistoryError(null)
+    const { data, error } = await supabase
+      .from('isopod_wish_history')
+      .select('*')
+      .order('created_at', { ascending: false })
+      .limit(100)
+    setIsopodHistoryLoading(false)
+    if (error) {
+      setIsopodHistoryError(error.message)
+      return
+    }
+    setIsopodHistoryEntries(data)
   }
 
   const ensureRecipesLoaded = async () => {
@@ -2653,35 +2721,112 @@ function App() {
 
       {activeTab === 'isopod' && (
         <div className="tab-view isopod-tab" key="isopod">
+          <button
+            type="button"
+            className="isopod-history-btn"
+            onClick={openIsopodHistory}
+            aria-label="Isopod-historikk"
+          >
+            <svg viewBox="0 0 24 24" aria-hidden="true">
+              <circle cx="12" cy="12" r="8.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+              <path
+                d="M12 7.5V12l3 2"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.8"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              />
+            </svg>
+          </button>
           <div className="isopod-frame">
-            <img src="/isopod.jpg" alt="Isopod" className="isopod-image" />
+            <img src="/isopod.png" alt="Isopod" className="isopod-image" />
             <div className="isopod-bubble-overlay">
-              {isopodWish?.text ? (
-                <button type="button" className="isopod-wish-text" onClick={clearIsopodWish}>
-                  {isopodWish.text}
-                </button>
-              ) : isopodAdding ? (
-                <form className="isopod-wish-form" onSubmit={submitIsopodWish}>
+              {isopodEditing ? (
+                <form className="isopod-edit-form" onSubmit={submitIsopodWish}>
                   <input
-                    type="text"
-                    autoComplete="off"
-                    placeholder="hva har isopod lyst på?"
-                    value={isopodInput}
-                    onChange={(e) => setIsopodInput(e.target.value)}
-                    autoFocus
+                    ref={isopodFileInputRef}
+                    type="file"
+                    accept="image/*"
+                    style={{ display: 'none' }}
+                    onChange={(e) =>
+                      handleImagePick(
+                        e,
+                        setIsopodEditImageFile,
+                        setIsopodEditImagePreview,
+                        isopodEditImageFile ? isopodEditImagePreview : null,
+                      )
+                    }
                   />
-                  <button type="submit" aria-label="Legg til" disabled={!isopodInput.trim()}>
-                    ✓
-                  </button>
+                  <div className="isopod-edit-row">
+                    {isopodEditImagePreview ? (
+                      <div className="isopod-edit-thumb">
+                        <img src={isopodEditImagePreview} alt="" onClick={() => isopodFileInputRef.current?.click()} />
+                        <button
+                          type="button"
+                          className="isopod-edit-thumb-remove"
+                          onClick={removeIsopodEditImage}
+                          aria-label="Fjern bilde"
+                        >
+                          ×
+                        </button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button"
+                        className="isopod-edit-photo-btn"
+                        onClick={() => isopodFileInputRef.current?.click()}
+                        aria-label="Legg til bilde"
+                      >
+                        <svg viewBox="0 0 24 24" aria-hidden="true">
+                          <rect x="3" y="5" width="18" height="14" rx="2.5" fill="none" stroke="currentColor" strokeWidth="1.8" />
+                          <circle cx="9" cy="10.5" r="1.6" fill="currentColor" />
+                          <path
+                            d="M4 16.5 8.5 12.5 11.5 15.2 15 11 20 16"
+                            fill="none"
+                            stroke="currentColor"
+                            strokeWidth="1.8"
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                          />
+                        </svg>
+                      </button>
+                    )}
+                    <input
+                      type="text"
+                      className="isopod-edit-text"
+                      autoComplete="off"
+                      placeholder="hva har isopod lyst på?"
+                      value={isopodEditText}
+                      onChange={(e) => setIsopodEditText(e.target.value)}
+                      autoFocus
+                    />
+                  </div>
+                  <div className="isopod-edit-actions">
+                    <button type="button" className="isopod-edit-cancel" onClick={cancelIsopodEdit} aria-label="Avbryt">
+                      ×
+                    </button>
+                    <button type="submit" className="isopod-edit-save" aria-label="Lagre">
+                      ✓
+                    </button>
+                  </div>
                 </form>
               ) : (
-                <button
-                  type="button"
-                  className="isopod-add-btn"
-                  onClick={() => setIsopodAdding(true)}
-                  aria-label="Legg til isopod-ønske"
-                >
-                  +
+                <button type="button" className="isopod-display" onClick={startIsopodEdit}>
+                  {isopodWish?.image_url && (
+                    <img
+                      className="isopod-wish-image"
+                      src={isopodWish.image_url}
+                      alt=""
+                      onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
+                    />
+                  )}
+                  {isopodWish?.text && <span className="isopod-wish-text-inner">{isopodWish.text}</span>}
+                  {!isopodWish?.image_url && !isopodWish?.text && (
+                    <span className="isopod-plus" aria-hidden="true">
+                      +
+                    </span>
+                  )}
                 </button>
               )}
             </div>
@@ -2808,6 +2953,55 @@ function App() {
                         </div>
                       </div>
                     ))}
+                  </div>
+                ))
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {isopodHistoryOpen && (
+        <div className="modal-backdrop" onClick={() => setIsopodHistoryOpen(false)}>
+          <div className="history-sheet" onClick={(e) => e.stopPropagation()}>
+            <div className="history-header">
+              <h2>Isopod-historikk</h2>
+              <button
+                type="button"
+                className="history-close"
+                onClick={() => setIsopodHistoryOpen(false)}
+                aria-label="Lukk"
+              >
+                ×
+              </button>
+            </div>
+            <div className="history-body">
+              {isopodHistoryLoading ? (
+                <div className="loading">
+                  <div className="spinner" aria-label="Laster" />
+                </div>
+              ) : isopodHistoryError ? (
+                <p className="loading-error">Feil: {isopodHistoryError}</p>
+              ) : !isopodHistoryEntries || isopodHistoryEntries.length === 0 ? (
+                <div className="empty">Ingen isopod-ønsker ennå</div>
+              ) : (
+                isopodHistoryEntries.map((entry) => (
+                  <div className="history-row isopod-history-row" key={entry.id}>
+                    {entry.image_url && (
+                      <img
+                        className="isopod-history-thumb"
+                        src={entry.image_url}
+                        alt=""
+                        onError={(e) => { e.currentTarget.style.visibility = 'hidden' }}
+                      />
+                    )}
+                    <div className="history-row-main">
+                      <span className="history-text">{entry.text || (entry.image_url ? '(kun bilde)' : '')}</span>
+                      <span className="history-list-badge">{entry.added_by ?? '?'}</span>
+                    </div>
+                    <div className="history-times">
+                      <span>{formatDateTime(entry.created_at)}</span>
+                    </div>
                   </div>
                 ))
               )}

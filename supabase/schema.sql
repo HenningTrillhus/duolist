@@ -113,6 +113,7 @@ create policy "anon full access" on push_subscriptions for all using (true) with
 create table if not exists isopod_wish (
   id int primary key default 1,
   text text,
+  image_url text,
   added_by text check (added_by in ('Nora', 'Henning')),
   updated_at timestamptz not null default now(),
   constraint isopod_wish_single_row check (id = 1)
@@ -124,3 +125,15 @@ on conflict (id) do nothing;
 alter table isopod_wish enable row level security;
 create policy "anon full access" on isopod_wish for all using (true) with check (true);
 alter publication supabase_realtime add table isopod_wish;
+
+-- Log of every isopod wish ever set, shown in the Isopod tab's history sheet.
+create table if not exists isopod_wish_history (
+  id uuid primary key default gen_random_uuid(),
+  text text,
+  image_url text,
+  added_by text check (added_by in ('Nora', 'Henning')),
+  created_at timestamptz not null default now()
+);
+
+alter table isopod_wish_history enable row level security;
+create policy "anon full access" on isopod_wish_history for all using (true) with check (true);
